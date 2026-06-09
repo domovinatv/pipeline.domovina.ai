@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env } from '../types';
-import { countByState, createJob, findActiveJobByYoutubeId, listJobs } from '../db';
+import { countByState, createJob, deleteJob, findActiveJobByYoutubeId, listJobs, updateJob } from '../db';
 import { extractYouTubeId, watchUrl } from '../util';
 import { layout, renderJobsPage } from './views';
 
@@ -49,6 +49,33 @@ admin.post('/jobs', async (c) => {
     });
   }
   return c.redirect('/admin', 303);
+});
+
+// Admin akcije po jobu (poziva ih tablica preko fetch-a; Basic Auth se nasljeđuje).
+//   delete   — obriši job iz queuea
+//   skip     — state=skipped (nikad se ne claima)
+//   postpone — state=postponed (drži izvan queuea)
+//   requeue  — vrati u queued (iz skipped/postponed/failed), očisti grešku
+admin.post('/jobs/:id/:action', async (c) => {
+  const id = c.req.param('id');
+  const action = c.req.param('action');
+  switch (action) {
+    case 'delete':
+      await deleteJob(c.env.DB, id);
+      break;
+    case 'skip':
+      await updateJob(c.env.DB, id, { state: 'skipped' });
+      break;
+    case 'postpone':
+      await updateJob(c.env.DB, id, { state: 'postponed' });
+      break;
+    case 'requeue':
+      await updateJob(c.env.DB, id, { state: 'queued', error: null });
+      break;
+    default:
+      return c.json({ error: `nepoznata akcija: ${action}` }, 400);
+  }
+  return c.json({ ok: true });
 });
 
 // JSON za client-side auto-refresh tablice.

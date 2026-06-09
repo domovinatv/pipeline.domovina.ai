@@ -95,6 +95,17 @@ h1 { font-size: 1.45rem; margin: 0 0 1rem; }
 /* Bijeli "+" — emoji ➕ ignorira CSS color (ostaje tamno siv na navy); plain glyph nasljeđuje #fff */
 .addbox button .plus { color: #fff; font-weight: 900; font-size: 1.15em; line-height: 1; }
 .addbox .hint { font-size: .8rem; color: var(--muted); margin-top: .5rem; }
+/* YouTube oEmbed preview (readonly) */
+.ytprev { display: flex; gap: .8rem; align-items: center; margin-top: .8rem; padding: .6rem; background: var(--bg); border: 1px solid var(--border); border-radius: .5rem; }
+.ytprev[hidden] { display: none; }
+.ytprev img { width: 120px; height: 68px; object-fit: cover; border-radius: .35rem; flex: none; background: var(--surface); }
+.ytprev-title { font-weight: 700; font-size: .95rem; line-height: 1.25; }
+.ytprev-sub { font-size: .85rem; margin-top: .15rem; }
+.ytprev-link { font-size: .82rem; display: inline-block; margin-top: .3rem; }
+/* Akcijski gumbi u tablici */
+button.act { border: 1px solid var(--border); background: var(--bg); color: var(--navy); border-radius: .35rem; padding: .2rem .5rem; font-size: .78rem; font-weight: 600; cursor: pointer; margin-right: .25rem; }
+button.act:hover { background: var(--surface); }
+button.act.del { color: var(--danger); border-color: #f3c9c5; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: .5rem; background: var(--bg); }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -159,7 +170,15 @@ export function renderJobsPage(): string {
     </div>
     <button type="submit"><span class="plus">+</span> Dodaj u queue</button>
   </form>
-  <div class="hint">Public ili unlisted — svejedno. Video se obradi identično, ostaje neindeksiran, dostupan samo na <span class="mono">domovina.ai/v/{id}</span>.</div>
+  <div class="ytprev" id="ytprev" hidden>
+    <img id="ytprev-thumb" alt="">
+    <div class="ytprev-meta">
+      <div class="ytprev-title" id="ytprev-title"></div>
+      <div class="ytprev-sub"><span id="ytprev-chan" class="dim"></span></div>
+      <a id="ytprev-link" class="ytprev-link" target="_blank" rel="noopener">▶ otvori na YouTube</a>
+    </div>
+  </div>
+  <div class="hint">Public ili unlisted — svejedno. Video se obradi identično, ostaje neindeksiran, dostupan samo na <span class="mono">domovina.ai/v/{id}</span>. <em>Preview (kanal/thumbnail) radi za public; za unlisted ostali metapodaci (trajanje, datum) stignu nakon downloada.</em></div>
 </div>
 
 <div class="controls">
@@ -170,9 +189,9 @@ export function renderJobsPage(): string {
 <div class="table-wrap">
   <table>
     <thead><tr>
-      <th>Dodано</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th>
+      <th>Dodано</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th>Akcije</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="5" class="empty">Učitavam…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
   </table>
 </div>
 
@@ -193,35 +212,58 @@ export function renderJobsPage(): string {
     const m = s.match(/[?&]v=([A-Za-z0-9_-]{11})|youtu[.]be[/]([A-Za-z0-9_-]{11})|[/]shorts[/]([A-Za-z0-9_-]{11})|[/]live[/]([A-Za-z0-9_-]{11})/);
     return m ? (m[1]||m[2]||m[3]||m[4]) : '';
   }
+  const prev = document.getElementById('ytprev');
   async function prefill(){
     const id = ytId(urlEl.value);
-    if (!id || id === lastId) return;
+    if (!id) { if (prev) prev.hidden = true; lastId = ''; return; }
+    if (id === lastId) return;
     lastId = id;
-    // Ne gazi ručno upisan naslov (prazno ili još uvijek prethodni auto-fill = slobodno)
-    if (titleEl.value && titleEl.value !== autoFilled) return;
     try {
       const u = 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id);
       const r = await fetch(u);
-      if (!r.ok) return;                      // 401 unlisted / 404 → preskoči
+      if (!r.ok) { if (prev) prev.hidden = true; return; }   // 401 unlisted / 404 → bez previewa
       const j = await r.json();
-      if (j && j.title) { titleEl.value = j.title; autoFilled = j.title; }
-    } catch(e) {}                             // CORS/mreža → tiho
+      // Readonly preview kartica
+      if (prev) {
+        document.getElementById('ytprev-thumb').src = j.thumbnail_url || '';
+        document.getElementById('ytprev-title').textContent = j.title || '';
+        document.getElementById('ytprev-chan').textContent = j.author_name ? ('Kanal: ' + j.author_name) : '';
+        document.getElementById('ytprev-link').href = 'https://www.youtube.com/watch?v=' + id;
+        prev.hidden = false;
+      }
+      // Prefill naslova (ne gazi ručni unos)
+      if (j.title && (!titleEl.value || titleEl.value === autoFilled)) { titleEl.value = j.title; autoFilled = j.title; }
+    } catch(e) { if (prev) prev.hidden = true; }   // CORS/mreža → tiho
   }
   urlEl.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(prefill, 400); });
   urlEl.addEventListener('change', prefill);
 })();
 
-const STATE_CLASS = { done:'ok', failed:'bad', queued:'neutral' };
+const STATE_CLASS = { done:'ok', failed:'bad', queued:'neutral', skipped:'neutral', postponed:'warn' };
 function pill(s){ return '<span class="pill '+(STATE_CLASS[s]||'warn')+'">'+s+'</span>'; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmt(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleString('hr-HR'); }
+// Gumbi nose data-id/data-act (bez inline onclicka) → delegirani listener niže.
+function btn(id,action,label,cls){ return '<button class="act '+(cls||'')+'" data-id="'+esc(id)+'" data-act="'+action+'">'+label+'</button>'; }
+function actions(j){
+  var b = [];
+  if (j.state==='queued') { b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
+  if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
+  b.push(btn(j.id,'delete','✕','del'));
+  return b.join('');
+}
+async function act(id, action){
+  if (action==='delete' && !confirm('Obrisati ovaj job iz queuea?')) return;
+  try { await fetch('/admin/jobs/'+id+'/'+action, { method:'POST' }); } catch(e) {}
+  refresh();
+}
 async function refresh(){
   try {
     const r = await fetch('/admin/api/jobs?limit=200', { headers: { 'accept':'application/json' } });
     if (!r.ok) return;
     const data = await r.json();
     const counts = data.counts || {};
-    const order = ['queued','fetching','transcribing','processing','done','failed'];
+    const order = ['queued','fetching','transcribing','processing','done','failed','postponed','skipped'];
     document.getElementById('stats').innerHTML = order.map(s =>
       '<div class="stat"><div class="label">'+s+'</div><div class="value">'+(counts[s]||0)+'</div></div>'
     ).join('');
@@ -229,12 +271,17 @@ async function refresh(){
       const yt = '<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
-      return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+yt+'</td><td>'+esc(j.title||'')+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td></tr>';
+      return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+yt+'</td><td>'+esc(j.title||'')+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
     }).join('');
-    document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5" class="empty">Nema jobova još. Dodaj prvi gore.</td></tr>';
+    document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="empty">Nema jobova još. Dodaj prvi gore.</td></tr>';
     document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');
   } catch(e) {}
 }
+// Delegirani listener za akcijske gumbe (data-id/data-act).
+document.getElementById('rows').addEventListener('click', function(e){
+  const b = e.target.closest('button.act');
+  if (b) act(b.dataset.id, b.dataset.act);
+});
 refresh();
 setInterval(refresh, 10000);
 </script>`;

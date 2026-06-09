@@ -16,6 +16,8 @@ export const JOB_STATES = [
   'processing',
   'done',
   'failed',
+  'skipped', // admin: ne obrađuj (nikad se ne claima)
+  'postponed', // admin: odgođeno (drži izvan queuea dok ga admin ne vrati u queued)
 ] as const;
 
 export type JobState = (typeof JOB_STATES)[number];

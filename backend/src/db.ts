@@ -20,7 +20,7 @@ export async function findActiveJobByYoutubeId(
 ): Promise<JobRow | null> {
   const row = await db
     .prepare(
-      `SELECT ${COLS} FROM jobs WHERE youtube_id = ? AND state != 'failed' AND state != 'done' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT ${COLS} FROM jobs WHERE youtube_id = ? AND state NOT IN ('failed','done','skipped') ORDER BY created_at DESC LIMIT 1`,
     )
     .bind(youtubeId)
     .first<JobRow>();
@@ -146,6 +146,11 @@ export async function updateJob(
   binds.push(id);
   await db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id=?`).bind(...binds).run();
   return getJob(db, id);
+}
+
+export async function deleteJob(db: D1Database, id: string): Promise<boolean> {
+  const res = await db.prepare(`DELETE FROM jobs WHERE id = ?`).bind(id).run();
+  return (res.meta.changes ?? 0) > 0;
 }
 
 // Sweep: jobovi koji su predugo zaglavili u 'fetching' (bridge pao prije PATCH-a)

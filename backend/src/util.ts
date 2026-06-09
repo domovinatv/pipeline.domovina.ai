@@ -38,8 +38,9 @@ export async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Server-side oEmbed dohvat (public videi; unlisted vraća 401 → null). Bez API ključa.
-// Vraća naslov + kanal (author_name). Non-blocking — pozivatelj hvata null.
+// Server-side oEmbed dohvat (radi za public I unlisted — oba vraćaju 200; samo
+// private/obrisani daju 401/404 → null). Bez API ključa. Vraća naslov + kanal
+// (author_name). Non-blocking — pozivatelj hvata null.
 export async function fetchOEmbed(
   youtubeId: string,
 ): Promise<{ title?: string; channel?: string } | null> {

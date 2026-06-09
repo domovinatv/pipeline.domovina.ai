@@ -224,7 +224,7 @@ export function renderJobsPage(): string {
       <a id="ytprev-link" class="ytprev-link" target="_blank" rel="noopener">▶ otvori na YouTube</a>
     </div>
   </div>
-  <div class="hint">Public ili unlisted — svejedno. Video se obradi identično, ostaje neindeksiran, dostupan samo na <span class="mono">domovina.ai/v/{id}</span>. <em>Preview (kanal/thumbnail) radi za public; za unlisted ostali metapodaci (trajanje, datum) stignu nakon downloada.</em></div>
+  <div class="hint">Public ili unlisted — svejedno. Video se obradi identično, ostaje neindeksiran, dostupan samo na <span class="mono">domovina.ai/v/{id}</span>. <em>Preview (naslov/kanal/thumbnail) radi i za unlisted; trajanje stiže nakon downloada. Bez previewa su samo private/obrisani videi.</em></div>
 </div>
 
 <div class="controls">
@@ -266,8 +266,9 @@ export function renderJobsPage(): string {
 </div>
 
 <script>
-// ── Auto-prefill naslova iz YouTube oEmbed-a (public videi; bez API ključa, CORS OK).
-// Unlisted vraća 401 → tiho preskačemo; bridge svejedno backfilla pravi naslov iz info.json.
+// ── Auto-prefill naslova iz YouTube oEmbed-a (bez API ključa, CORS OK).
+// Radi za public I unlisted (oba vraćaju 200 — unlisted je embeddable). Samo
+// private/obrisani vrate 401/404 → tiho preskočimo; bridge svejedno backfilla iz info.json.
 (function(){
   const urlEl = document.getElementById('url');
   const titleEl = document.getElementById('title');
@@ -291,7 +292,7 @@ export function renderJobsPage(): string {
     try {
       const u = 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id);
       const r = await fetch(u);
-      if (!r.ok) { if (prev) prev.hidden = true; return; }   // 401 unlisted / 404 → bez previewa
+      if (!r.ok) { if (prev) prev.hidden = true; return; }   // 401/404 (private/obrisan) → bez previewa
       const j = await r.json();
       // Readonly preview kartica
       if (prev) {

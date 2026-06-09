@@ -1,0 +1,40 @@
+name = "pipeline-domovina-backend"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "7dc7167b7e2e00923bfa7cd697df14e4"
+
+# Custom Domain (NE plain route) — wrangler na deployu SAM stvori proxied DNS
+# zapis + edge certifikat za pipeline.domovina.ai. Nužno jer je subdomain nov
+# (nema postojećeg DNS zapisa). Bonus: novi subdomain nije pod ničijim Cloudflare
+# Access app-om (za razliku od studio.domovina.ai = Supabase Studio), pa je javno
+# dostupan odmah; auth radi Worker (Basic Auth /admin + Bearer /api).
+[[routes]]
+pattern = "pipeline.domovina.ai"
+custom_domain = true
+
+[observability]
+enabled = true
+
+[triggers]
+# Svakih 15 min: sweep "stuck" claimanih jobova natrag u queued (bridge crash/no-op).
+crons = ["*/15 * * * *"]
+
+# D1 — kreiraj s: wrangler d1 create pipeline_domovina
+# Zalijepi database_id koji ispiše komanda (ostavi placeholder dok ne kreiraš).
+[[d1_databases]]
+binding = "DB"
+database_name = "pipeline_domovina"
+database_id = "3b234c3f-efa5-4368-b4d6-4421269e5a04"
+migrations_dir = "migrations"
+
+[vars]
+# Bazni URL frontenda gdje živi gotov video (za detail_url = {SITE_BASE}/v/{id}).
+SITE_BASE = "https://domovina.ai"
+# Default cijena obrade u centima (billing skela; "0" = besplatno / admin put).
+PRICE_CENTS = "100"
+
+# Secrets — postavi s `wrangler secret put`:
+#   ADMIN_USER   # Basic Auth user za /admin dashboard
+#   ADMIN_PASS   # Basic Auth pass za /admin dashboard
+#   INGEST_KEY   # Bearer token za /api/jobs/* (lokalni bridge na Mac Miniju + budući API)

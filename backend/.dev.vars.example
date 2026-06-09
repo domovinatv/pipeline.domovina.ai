@@ -1,0 +1,5 @@
+# Kopiraj u .dev.vars (gitignored) za lokalni `wrangler dev`.
+# U produkciji se postavljaju kroz `wrangler secret put <NAME>`.
+ADMIN_USER="admin"
+ADMIN_PASS="promijeni-me"
+INGEST_KEY="dugacki-random-token-za-bridge"

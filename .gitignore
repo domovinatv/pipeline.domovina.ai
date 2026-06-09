@@ -1,0 +1,19 @@
+# --- Secrets (NIKAD u public repo) ---
+.dev.vars
+.env
+.env.*
+*.pem
+secrets/
+
+# --- Cloudflare / Node ---
+.wrangler/
+node_modules/
+dist/
+*.log
+
+# --- Lokalni alati ---
+.claude/
+.DS_Store
+.idea/
+*.iml
+.vscode/

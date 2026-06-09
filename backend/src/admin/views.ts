@@ -123,6 +123,41 @@ tbody tr:hover { background: var(--surface); }
 .pill.bad { background: #F8E2E0; color: var(--danger); }
 .pill.warn { background: #FDF1E0; color: var(--warning); }
 .pill.neutral { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+/* Semantičke boje po stanju (pill klasa = ime stanja) */
+.pill.queued      { background: #E7EEF8; color: #1D4ED8; }   /* plava — čeka */
+.pill.fetching,
+.pill.transcribing,
+.pill.processing  { background: #FDF1E0; color: #B45309; }   /* amber — u tijeku */
+.pill.done        { background: #E0F1E5; color: #2E8540; }   /* zelena — gotovo */
+.pill.failed      { background: #F8E2E0; color: #B42318; }   /* crvena — greška */
+.pill.skipped     { background: #ECEFF2; color: #5A6570; }   /* siva — preskočeno */
+.pill.postponed   { background: #F3E8FF; color: #7C3AED; }   /* ljubičasta — odgođeno */
+/* Akcijski gumbi: boja akcije == boja stanja koje proizvodi (vizualna veza) */
+button.act.a-skip     { color: #5A6570; border-color: #D4D9DE; }
+button.act.a-skip:hover     { background: #ECEFF2; }
+button.act.a-postpone { color: #7C3AED; border-color: #E3D4FB; }
+button.act.a-postpone:hover { background: #F3E8FF; }
+button.act.a-requeue  { color: #1D4ED8; border-color: #CDDDF6; }
+button.act.a-requeue:hover  { background: #E7EEF8; }
+button.act.a-delete   { color: #B42318; border-color: #F3C9C5; }
+button.act.a-delete:hover   { background: #F8E2E0; }
+button.act:active { transform: translateY(1px); }
+button.act.busy { opacity: .45; pointer-events: none; }
+/* Filter/search kontrole + pager */
+.controls select, .controls input {
+  border: 1px solid var(--border); border-radius: .4rem; padding: .35rem .6rem;
+  font-size: .88rem; font-family: inherit; background: var(--bg); color: var(--navy);
+}
+.controls .search { min-width: 14rem; }
+.controls .spacer { flex: 1; }
+.pager { display: flex; align-items: center; gap: .75rem; margin-top: .9rem; flex-wrap: wrap; }
+.pager button {
+  border: 1px solid var(--border); background: var(--bg); color: var(--navy);
+  border-radius: .4rem; padding: .35rem .8rem; font-size: .88rem; font-weight: 600; cursor: pointer;
+}
+.pager button:hover:not(:disabled) { background: var(--surface); }
+.pager button:disabled { opacity: .4; cursor: not-allowed; }
+.pager .info { font-size: .85rem; color: var(--muted); }
 .controls { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
 .controls .auto { font-size: .82rem; color: var(--success); font-weight: 700; }
 .empty { text-align: center; padding: 2rem; color: var(--muted); }
@@ -186,6 +221,24 @@ export function renderJobsPage(): string {
 </div>
 
 <div class="controls">
+  <label for="fState" class="dim">Status:</label>
+  <select id="fState">
+    <option value="">svi</option>
+    <option value="queued">queued</option>
+    <option value="fetching">fetching</option>
+    <option value="transcribing">transcribing</option>
+    <option value="processing">processing</option>
+    <option value="done">done</option>
+    <option value="failed">failed</option>
+    <option value="postponed">postponed</option>
+    <option value="skipped">skipped</option>
+  </select>
+  <input id="fQ" class="search" type="search" placeholder="traži ID / naslov / kanal…">
+  <label for="fLimit" class="dim">po stranici:</label>
+  <select id="fLimit">
+    <option>25</option><option selected>50</option><option>100</option><option>200</option>
+  </select>
+  <span class="spacer"></span>
   <span class="auto">● auto-refresh 10s</span>
   <span class="dim" id="updated"></span>
 </div>
@@ -197,6 +250,12 @@ export function renderJobsPage(): string {
     </tr></thead>
     <tbody id="rows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
   </table>
+</div>
+
+<div class="pager">
+  <button id="pPrev">← Prethodna</button>
+  <button id="pNext">Sljedeća →</button>
+  <span class="info" id="pInfo"></span>
 </div>
 
 <script>
@@ -243,21 +302,24 @@ export function renderJobsPage(): string {
   urlEl.addEventListener('change', prefill);
 })();
 
-const STATE_CLASS = { done:'ok', failed:'bad', queued:'neutral', skipped:'neutral', postponed:'warn' };
-function pill(s){ return '<span class="pill '+(STATE_CLASS[s]||'warn')+'">'+s+'</span>'; }
+// pill klasa = ime stanja → semantička boja iz CSS-a (.pill.queued, .pill.done, …)
+function pill(s){ return '<span class="pill '+s+'">'+s+'</span>'; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmt(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleString('hr-HR'); }
 function thumb(id){ return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
 function dur(s){ if(!s) return ''; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; const p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
-// Gumbi nose data-id/data-act (bez inline onclicka) → delegirani listener niže.
-function btn(id,action,label,cls){ return '<button class="act '+(cls||'')+'" data-id="'+esc(id)+'" data-act="'+action+'">'+label+'</button>'; }
+// Akcijski gumb: klasa a-{action} → boja akcije == boja stanja koje proizvodi (vizualna veza).
+function btn(id,action,label){ return '<button class="act a-'+action+'" data-id="'+esc(id)+'" data-act="'+action+'">'+label+'</button>'; }
 function actions(j){
   var b = [];
   if (j.state==='queued') { b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
-  b.push(btn(j.id,'delete','✕','del'));
+  b.push(btn(j.id,'delete','✕'));
   return b.join('');
 }
+
+// Paging/filter stanje
+var pState='', pQ='', pLimit=50, pOffset=0, pTotal=0;
 async function act(id, action){
   if (action==='delete' && !confirm('Obrisati ovaj job iz queuea?')) return;
   try { await fetch('/admin/jobs/'+id+'/'+action, { method:'POST' }); } catch(e) {}
@@ -265,9 +327,11 @@ async function act(id, action){
 }
 async function refresh(){
   try {
-    const r = await fetch('/admin/api/jobs?limit=200', { headers: { 'accept':'application/json' } });
+    const qs = '?limit='+pLimit+'&offset='+pOffset+(pState?'&state='+encodeURIComponent(pState):'')+(pQ?'&q='+encodeURIComponent(pQ):'');
+    const r = await fetch('/admin/api/jobs'+qs, { headers: { 'accept':'application/json' } });
     if (!r.ok) return;
     const data = await r.json();
+    pTotal = data.total||0;
     const counts = data.counts || {};
     const order = ['queued','fetching','transcribing','processing','done','failed','postponed','skipped'];
     document.getElementById('stats').innerHTML = order.map(s =>
@@ -281,14 +345,26 @@ async function refresh(){
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
     }).join('');
-    document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="empty">Nema jobova još. Dodaj prvi gore.</td></tr>';
+    const shown = (data.jobs||[]).length;
+    document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="empty">'+((pState||pQ)?'Nema rezultata za filter.':'Nema jobova još. Dodaj prvi gore.')+'</td></tr>';
+    // Pager
+    document.getElementById('pInfo').textContent = pTotal ? ((pOffset+1)+'–'+(pOffset+shown)+' od '+pTotal) : 'nema zapisa';
+    document.getElementById('pPrev').disabled = pOffset <= 0;
+    document.getElementById('pNext').disabled = pOffset + pLimit >= pTotal;
     document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');
   } catch(e) {}
 }
-// Delegirani listener za akcijske gumbe (data-id/data-act).
+// Filter/search/page-size kontrole
+var fState=document.getElementById('fState'), fQ=document.getElementById('fQ'), fLimit=document.getElementById('fLimit'), qTimer=null;
+fState.addEventListener('change', function(){ pState=fState.value; pOffset=0; refresh(); });
+fLimit.addEventListener('change', function(){ pLimit=parseInt(fLimit.value,10)||50; pOffset=0; refresh(); });
+fQ.addEventListener('input', function(){ clearTimeout(qTimer); qTimer=setTimeout(function(){ pQ=fQ.value.trim(); pOffset=0; refresh(); }, 350); });
+document.getElementById('pPrev').addEventListener('click', function(){ if(pOffset>0){ pOffset=Math.max(0,pOffset-pLimit); refresh(); } });
+document.getElementById('pNext').addEventListener('click', function(){ if(pOffset+pLimit<pTotal){ pOffset+=pLimit; refresh(); } });
+// Akcijski gumbi (data-id/data-act) + busy feedback na klik.
 document.getElementById('rows').addEventListener('click', function(e){
   const b = e.target.closest('button.act');
-  if (b) act(b.dataset.id, b.dataset.act);
+  if (b) { b.classList.add('busy'); act(b.dataset.id, b.dataset.act); }
 });
 refresh();
 setInterval(refresh, 10000);

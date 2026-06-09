@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env } from '../types';
-import { countByState, createJob, deleteJob, findActiveJobByYoutubeId, listJobs, updateJob } from '../db';
+import { countByState, countJobs, createJob, deleteJob, findActiveJobByYoutubeId, listJobs, updateJob } from '../db';
 import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
 import { layout, renderJobsPage } from './views';
 
@@ -80,12 +80,16 @@ admin.post('/jobs/:id/:action', async (c) => {
   return c.json({ ok: true });
 });
 
-// JSON za client-side auto-refresh tablice.
+// JSON za client-side auto-refresh tablice (paginirano + filter + search).
 admin.get('/api/jobs', async (c) => {
-  const limit = Number(c.req.query('limit') ?? 200);
-  const [jobs, counts] = await Promise.all([
-    listJobs(c.env.DB, { limit }),
-    countByState(c.env.DB),
+  const limit = Number(c.req.query('limit') ?? 50);
+  const offset = Number(c.req.query('offset') ?? 0);
+  const state = c.req.query('state') || undefined;
+  const q = c.req.query('q') || undefined;
+  const [jobs, counts, total] = await Promise.all([
+    listJobs(c.env.DB, { limit, offset, state, q }),
+    countByState(c.env.DB), // globalni brojevi po stanju (jeftin GROUP BY) — za stats trake/filter
+    countJobs(c.env.DB, { state, q }), // total za trenutni filter → pager
   ]);
-  return c.json({ counts, jobs });
+  return c.json({ counts, jobs, total, limit, offset });
 });

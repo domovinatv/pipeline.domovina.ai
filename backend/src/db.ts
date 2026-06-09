@@ -57,28 +57,51 @@ export async function getJob(db: D1Database, id: string): Promise<JobRow | null>
   return row ?? null;
 }
 
-export async function listJobs(
-  db: D1Database,
-  opts: { state?: string; limit?: number } = {},
-): Promise<JobRow[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
-  let sql = `SELECT ${COLS} FROM jobs`;
+export interface ListOpts {
+  state?: string; // CSV dozvoljen: "queued,processing"
+  q?: string; // search po youtube_id / title / channel
+  limit?: number;
+  offset?: number;
+}
+
+// Sastavi WHERE za listanje/brojanje (state filter + free-text search).
+function buildFilter(opts: ListOpts): { where: string; binds: unknown[] } {
+  const cond: string[] = [];
   const binds: unknown[] = [];
   if (opts.state) {
-    // Dozvoli više stanja odvojenih zarezom: ?state=transcribing,processing
     const states = opts.state.split(',').map((s) => s.trim()).filter(Boolean);
     if (states.length) {
-      sql += ` WHERE state IN (${states.map(() => '?').join(',')})`;
+      cond.push(`state IN (${states.map(() => '?').join(',')})`);
       binds.push(...states);
     }
   }
-  sql += ` ORDER BY created_at DESC LIMIT ?`;
-  binds.push(limit);
+  if (opts.q && opts.q.trim()) {
+    const like = '%' + opts.q.trim() + '%';
+    cond.push(`(youtube_id LIKE ? OR title LIKE ? OR channel LIKE ?)`);
+    binds.push(like, like, like);
+  }
+  return { where: cond.length ? 'WHERE ' + cond.join(' AND ') : '', binds };
+}
+
+export async function listJobs(db: D1Database, opts: ListOpts = {}): Promise<JobRow[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const offset = Math.max(opts.offset ?? 0, 0);
+  const { where, binds } = buildFilter(opts);
   const res = await db
-    .prepare(sql)
-    .bind(...binds)
+    .prepare(`SELECT ${COLS} FROM jobs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    .bind(...binds, limit, offset)
     .all<JobRow>();
   return res.results ?? [];
+}
+
+// Ukupan broj jobova za dani filter (za pager).
+export async function countJobs(db: D1Database, opts: ListOpts = {}): Promise<number> {
+  const { where, binds } = buildFilter(opts);
+  const r = await db
+    .prepare(`SELECT COUNT(*) AS n FROM jobs ${where}`)
+    .bind(...binds)
+    .first<{ n: number }>();
+  return r?.n ?? 0;
 }
 
 export async function countByState(db: D1Database): Promise<Record<string, number>> {

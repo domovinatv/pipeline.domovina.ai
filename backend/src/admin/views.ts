@@ -188,7 +188,9 @@ export function renderJobsPage(): string {
   function ytId(s){
     s = (s||'').trim();
     if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
-    const m = s.match(/[?&]v=([A-Za-z0-9_-]{11})|youtu\.be\/([A-Za-z0-9_-]{11})|\/shorts\/([A-Za-z0-9_-]{11})|\/live\/([A-Za-z0-9_-]{11})/);
+    // NB: [.] i [/] umjesto \. \/ — ovaj <script> je u server-side template literalu
+    // koji bi pojeo backslasheve i razbio regex (numeric-separator crash). Klase rade isto.
+    const m = s.match(/[?&]v=([A-Za-z0-9_-]{11})|youtu[.]be[/]([A-Za-z0-9_-]{11})|[/]shorts[/]([A-Za-z0-9_-]{11})|[/]live[/]([A-Za-z0-9_-]{11})/);
     return m ? (m[1]||m[2]||m[3]||m[4]) : '';
   }
   async function prefill(){

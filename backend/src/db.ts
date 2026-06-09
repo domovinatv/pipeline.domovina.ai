@@ -1,5 +1,5 @@
-import type { JobRow, JobState } from './types';
-import { newId, nowSec } from './util';
+import type { ApiKeyRow, JobRow, JobState } from './types';
+import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
   'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, done_at, deleted_at';
@@ -60,6 +60,7 @@ export async function getJob(db: D1Database, id: string): Promise<JobRow | null>
 export interface ListOpts {
   state?: string; // CSV dozvoljen: "queued,processing"
   q?: string; // search po youtube_id / title / channel
+  apiKeyId?: string; // ograniči na jobove jednog API ključa (v1 klijent vidi samo svoje)
   limit?: number;
   offset?: number;
 }
@@ -79,6 +80,10 @@ function buildFilter(opts: ListOpts): { where: string; binds: unknown[] } {
     const like = '%' + opts.q.trim() + '%';
     cond.push(`(youtube_id LIKE ? OR title LIKE ? OR channel LIKE ?)`);
     binds.push(like, like, like);
+  }
+  if (opts.apiKeyId) {
+    cond.push(`api_key_id = ?`);
+    binds.push(opts.apiKeyId);
   }
   return { where: cond.length ? 'WHERE ' + cond.join(' AND ') : '', binds };
 }
@@ -223,4 +228,85 @@ export async function sweepStuckFetching(db: D1Database, olderThanSec: number): 
     .bind(nowSec(), cutoff)
     .run();
   return res.meta.changes ?? 0;
+}
+
+// ───────────────────────── API ključevi (SaaS programatski enqueue) ─────────────────────────
+const KEY_COLS = 'id, name, key_hash, credits, enabled, created_at, last_used_at';
+
+// Kreiraj ključ: generiraj sirovi ključ, pohrani SAMO njegov SHA-256. Sirovi se
+// vraća pozivatelju jednom (admin ga pokaže korisniku — poslije nije dohvatljiv).
+export async function createApiKey(
+  db: D1Database,
+  name: string,
+  credits: number,
+): Promise<{ row: ApiKeyRow; rawKey: string }> {
+  const id = newId();
+  const rawKey = genApiKey();
+  const keyHash = await sha256Hex(rawKey);
+  const ts = nowSec();
+  await db
+    .prepare(
+      `INSERT INTO api_keys (id, name, key_hash, credits, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)`,
+    )
+    .bind(id, name, keyHash, Math.max(0, Math.floor(credits) || 0), ts)
+    .run();
+  return { row: (await getApiKey(db, id))!, rawKey };
+}
+
+export async function getApiKey(db: D1Database, id: string): Promise<ApiKeyRow | null> {
+  return (
+    (await db.prepare(`SELECT ${KEY_COLS} FROM api_keys WHERE id = ?`).bind(id).first<ApiKeyRow>()) ??
+    null
+  );
+}
+
+// Auth lookup: nađi OMOGUĆEN ključ po hashu (onemogućeni se tretiraju kao nepostojeći).
+export async function getApiKeyByHash(db: D1Database, hash: string): Promise<ApiKeyRow | null> {
+  return (
+    (await db
+      .prepare(`SELECT ${KEY_COLS} FROM api_keys WHERE key_hash = ? AND enabled = 1`)
+      .bind(hash)
+      .first<ApiKeyRow>()) ?? null
+  );
+}
+
+export async function listApiKeys(db: D1Database): Promise<ApiKeyRow[]> {
+  const res = await db
+    .prepare(`SELECT ${KEY_COLS} FROM api_keys ORDER BY created_at DESC`)
+    .all<ApiKeyRow>();
+  return res.results ?? [];
+}
+
+export async function setApiKeyEnabled(
+  db: D1Database,
+  id: string,
+  enabled: boolean,
+): Promise<void> {
+  await db.prepare(`UPDATE api_keys SET enabled = ? WHERE id = ?`).bind(enabled ? 1 : 0, id).run();
+}
+
+// Dopuni (ili oduzmi) kredite; ne ide ispod 0. Ručni top-up dok nema pay.domovina.ai veze.
+export async function addApiKeyCredits(db: D1Database, id: string, delta: number): Promise<void> {
+  await db
+    .prepare(`UPDATE api_keys SET credits = MAX(0, credits + ?) WHERE id = ?`)
+    .bind(Math.floor(delta) || 0, id)
+    .run();
+}
+
+export async function deleteApiKey(db: D1Database, id: string): Promise<boolean> {
+  const res = await db.prepare(`DELETE FROM api_keys WHERE id = ?`).bind(id).run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+// Atomski "rezerviraj" 1 kredit (credits>0 guard, bez D1 transakcija). true = skinut.
+export async function consumeApiKeyCredit(db: D1Database, id: string): Promise<boolean> {
+  const res = await db
+    .prepare(`UPDATE api_keys SET credits = credits - 1 WHERE id = ? AND credits > 0`)
+    .bind(id)
+    .run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+export async function touchApiKey(db: D1Database, id: string): Promise<void> {
+  await db.prepare(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`).bind(nowSec(), id).run();
 }

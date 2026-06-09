@@ -12,6 +12,9 @@
  * server-side; redovi se osvježavaju JSON-om na klijentu (auto-refresh) bez reloada.
  */
 
+import type { ApiKeyRow } from '../types';
+import { escapeHtml } from '../util';
+
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
 <linearGradient id="hdrFlag" x1="0" y1="0" x2="0" y2="1">
@@ -185,6 +188,27 @@ tr.deleted .act { text-decoration: none; opacity: 1; }
 .controls { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
 .controls .auto { font-size: .82rem; color: var(--success); font-weight: 700; }
 .empty { text-align: center; padding: 2rem; color: var(--muted); }
+/* Tabovi (Queue / API ključevi) */
+.tabs { display: flex; gap: .5rem; margin-bottom: 1.1rem; }
+.tabs .tab {
+  padding: .4rem .9rem; border: 1px solid var(--border); border-radius: .4rem;
+  text-decoration: none; font-weight: 700; font-size: .9rem; color: var(--muted); background: var(--surface);
+}
+.tabs .tab.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+.tabs .tab:hover:not(.active) { background: #eef1f4; }
+/* Flash: jednokratni prikaz sirovog API ključa */
+.flash { background: #FFF8E1; border: 1px solid #F5DEB8; border-radius: .5rem; padding: 1rem; margin-bottom: 1.25rem; }
+.flash .key {
+  display: block; margin: .6rem 0 .3rem; padding: .55rem .7rem; background: var(--bg);
+  border: 1px solid var(--border); border-radius: .4rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: .95rem; font-weight: 700; word-break: break-all; color: var(--navy);
+}
+/* Krediti + inline akcijske forme u tablici ključeva */
+.credits { font-weight: 800; font-size: 1.05rem; }
+.credits.pos { color: var(--success); }
+.credits.zero { color: var(--danger); }
+.keyact { display: inline-flex; gap: .3rem; align-items: center; margin: 0 .4rem .25rem 0; }
+.cred-inp { width: 4.5rem; border: 1px solid var(--border); border-radius: .35rem; padding: .2rem .4rem; font-size: .82rem; font-family: inherit; }
 footer { margin: 2rem 0 0; padding: 1rem 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .82rem; text-align: center; }
 @media (max-width: 720px) {
   header { padding: .7rem 1rem; } main { padding: 1rem; }
@@ -215,9 +239,17 @@ export function statePill(state: string): string {
   return `<span class="pill ${cls}">${state}</span>`;
 }
 
+// Navigacijski tabovi između queue i API-ključeva stranica.
+function navTabs(active: 'queue' | 'keys'): string {
+  const tab = (href: string, id: string, label: string) =>
+    `<a class="tab${active === id ? ' active' : ''}" href="${href}">${label}</a>`;
+  return `<nav class="tabs">${tab('/admin', 'queue', 'Queue')}${tab('/admin/keys', 'keys', 'API ključevi')}</nav>`;
+}
+
 // Glavna stranica: stats + forma za dodavanje + tablica (puni se JSON-om na klijentu).
 export function renderJobsPage(): string {
   const body = `
+${navTabs('queue')}
 <h1>Queue obrade</h1>
 <div class="stats" id="stats"></div>
 
@@ -401,4 +433,78 @@ refresh();
 setInterval(refresh, 10000);
 </script>`;
   return layout('DOMOVINA Pipeline — queue', body);
+}
+
+// Kratki UTC prikaz vremena za server-rendered tablice (bez klijentskog JS-a).
+function fmtTs(ts: number | null): string {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+}
+
+// Stranica za upravljanje API ključevima (server-rendered, forme → redirect).
+// `flash` se postavi nakon kreiranja da se sirovi ključ pokaže jednom.
+export function renderKeysPage(keys: ApiKeyRow[], flash?: { rawKey: string; name: string }): string {
+  const flashHtml = flash
+    ? `<div class="flash">
+    <strong>Ključ „${escapeHtml(flash.name)}" kreiran.</strong> Spremi ga sad — neće biti ponovno prikazan.
+    <code class="key">${escapeHtml(flash.rawKey)}</code>
+    <div class="dim">Pohranjuje se samo SHA-256 hash; sirovi ključ se kasnije ne može dohvatiti.</div>
+  </div>`
+    : '';
+
+  const rows = keys
+    .map((k) => {
+      const status = k.enabled
+        ? '<span class="pill ok">aktivan</span>'
+        : '<span class="pill bad">onemogućen</span>';
+      const toggle = k.enabled
+        ? `<form method="POST" action="/admin/keys/${k.id}/disable" class="keyact"><button class="act a-skip">Onemogući</button></form>`
+        : `<form method="POST" action="/admin/keys/${k.id}/enable" class="keyact"><button class="act a-requeue">Omogući</button></form>`;
+      return `<tr>
+      <td>${escapeHtml(k.name)}<div class="dim sub mono">${escapeHtml(k.key_hash.slice(0, 12))}…</div></td>
+      <td><span class="credits ${k.credits > 0 ? 'pos' : 'zero'}">${k.credits}</span></td>
+      <td>${status}</td>
+      <td class="dim">${fmtTs(k.created_at)}</td>
+      <td class="dim">${fmtTs(k.last_used_at)}</td>
+      <td>
+        <form method="POST" action="/admin/keys/${k.id}/credits" class="keyact">
+          <input type="number" name="amount" value="10" step="1" class="cred-inp" aria-label="iznos kredita (negativno = oduzmi)">
+          <button class="act a-requeue">Primijeni</button>
+        </form>
+        ${toggle}
+        <form method="POST" action="/admin/keys/${k.id}/delete" class="keyact" onsubmit="return confirm('Trajno obrisati API ključ „${escapeHtml(k.name)}\\"? Nepovratno.')"><button class="act a-delete">Obriši</button></form>
+      </td>
+    </tr>`;
+    })
+    .join('');
+
+  const body = `
+${navTabs('keys')}
+<h1>API ključevi</h1>
+${flashHtml}
+
+<div class="addbox">
+  <form method="POST" action="/admin/keys">
+    <div class="field">
+      <label for="kname">Naziv ključa</label>
+      <input id="kname" name="name" placeholder="npr. Klijent X" required autofocus>
+    </div>
+    <div class="field">
+      <label for="kcred">Početni krediti</label>
+      <input id="kcred" name="credits" type="number" value="0" min="0" step="1">
+    </div>
+    <button type="submit"><span class="plus">+</span> Kreiraj ključ</button>
+  </form>
+  <div class="hint">1 kredit = 1 obrađeni video. Klijent šalje <span class="mono">Authorization: Bearer &lt;ključ&gt;</span> na <span class="mono">POST /api/v1/jobs</span>. Enqueue troši 1 kredit; bez kredita → HTTP 402. Kredite ovdje dopunjuješ/oduzimaš ručno (polje prima i negativan iznos).</div>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Naziv</th><th>Krediti</th><th>Status</th><th>Kreiran</th><th>Zadnje korišteno</th><th>Akcije</th>
+    </tr></thead>
+    <tbody>${rows || '<tr><td colspan="6" class="empty">Još nema ključeva. Kreiraj prvi gore.</td></tr>'}</tbody>
+  </table>
+</div>`;
+  return layout('DOMOVINA Pipeline — API ključevi', body);
 }

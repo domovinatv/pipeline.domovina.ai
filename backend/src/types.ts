@@ -53,3 +53,13 @@ export interface JobRow {
   done_at: number | null;
   deleted_at: number | null; // soft-delete (reverzibilno); NULL = živ job
 }
+
+export interface ApiKeyRow {
+  id: string;
+  name: string;
+  key_hash: string; // SHA-256 sirovog ključa; sirovi ključ se ne pohranjuje
+  credits: number; // 1 kredit = 1 obrađeni video (gate na enqueue)
+  enabled: number; // 0/1
+  created_at: number;
+  last_used_at: number | null;
+}

@@ -32,6 +32,16 @@ export function newId(): string {
   return crypto.randomUUID();
 }
 
+// Sirovi API ključ za programatske klijente. Prefiks 'pdk_' (pipeline domovina key)
+// + 32 random bajta u hexu. Pohranjuje se SAMO SHA-256 hash — ovo je jedini put da
+// klijent vidi sirovi ključ (pokaže se jednom pri kreiranju).
+export function genApiKey(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return 'pdk_' + hex;
+}
+
 export async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest('SHA-256', data);

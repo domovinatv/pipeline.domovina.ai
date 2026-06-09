@@ -1,9 +1,24 @@
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env } from '../types';
-import { countByState, countJobs, createJob, deleteJob, findActiveJobByYoutubeId, listJobs, restoreJob, softDeleteJob, updateJob } from '../db';
+import {
+  addApiKeyCredits,
+  countByState,
+  countJobs,
+  createApiKey,
+  createJob,
+  deleteApiKey,
+  deleteJob,
+  findActiveJobByYoutubeId,
+  listApiKeys,
+  listJobs,
+  restoreJob,
+  setApiKeyEnabled,
+  softDeleteJob,
+  updateJob,
+} from '../db';
 import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
-import { layout, renderJobsPage } from './views';
+import { layout, renderJobsPage, renderKeysPage } from './views';
 
 export const admin = new Hono<{ Bindings: Env }>();
 
@@ -86,6 +101,48 @@ admin.post('/jobs/:id/:action', async (c) => {
       return c.json({ error: `nepoznata akcija: ${action}` }, 400);
   }
   return c.json({ ok: true });
+});
+
+// ───────────────────────── API ključevi (server-rendered) ─────────────────────────
+admin.get('/keys', async (c) => {
+  const keys = await listApiKeys(c.env.DB);
+  return c.html(renderKeysPage(keys));
+});
+
+// Kreiraj ključ → re-renderaj stranicu sa sirovim ključem prikazanim JEDNOM (flash).
+admin.post('/keys', async (c) => {
+  const form = await c.req.parseBody();
+  const name = String(form.name ?? '').trim() || 'bez imena';
+  const credits = Math.max(0, parseInt(String(form.credits ?? '0'), 10) || 0);
+  const { row, rawKey } = await createApiKey(c.env.DB, name, credits);
+  const keys = await listApiKeys(c.env.DB);
+  return c.html(renderKeysPage(keys, { rawKey, name: row.name }));
+});
+
+// Akcije po ključu: credits (+/− ručno), enable/disable, delete.
+admin.post('/keys/:id/:action', async (c) => {
+  const id = c.req.param('id');
+  const action = c.req.param('action');
+  switch (action) {
+    case 'credits': {
+      const form = await c.req.parseBody().catch(() => ({}));
+      const amount = parseInt(String((form as Record<string, unknown>).amount ?? '0'), 10) || 0;
+      await addApiKeyCredits(c.env.DB, id, amount);
+      break;
+    }
+    case 'enable':
+      await setApiKeyEnabled(c.env.DB, id, true);
+      break;
+    case 'disable':
+      await setApiKeyEnabled(c.env.DB, id, false);
+      break;
+    case 'delete':
+      await deleteApiKey(c.env.DB, id);
+      break;
+    default:
+      return c.text(`nepoznata akcija: ${action}`, 400);
+  }
+  return c.redirect('/admin/keys', 303);
 });
 
 // JSON za client-side auto-refresh tablice (paginirano + filter + search).

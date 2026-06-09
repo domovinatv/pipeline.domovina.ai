@@ -74,6 +74,23 @@ h1 { font-size: 1.45rem; margin: 0 0 1rem; }
   letter-spacing: .05em; font-weight: 700;
 }
 .stat .value { font-size: 1.35rem; font-weight: 700; }
+/* Stat-pločice obojane po stanju — iste semantičke boje kao pillovi u listi */
+.stat.s-queued      { background: #E7EEF8; border-color: #CDDDF6; }
+.stat.s-queued .value { color: #1D4ED8; }
+.stat.s-fetching,
+.stat.s-transcribing,
+.stat.s-processing  { background: #FDF1E0; border-color: #F5DEB8; }
+.stat.s-fetching .value,
+.stat.s-transcribing .value,
+.stat.s-processing .value { color: #B45309; }
+.stat.s-done        { background: #E0F1E5; border-color: #BFE3CC; }
+.stat.s-done .value { color: #2E8540; }
+.stat.s-failed      { background: #F8E2E0; border-color: #F3C9C5; }
+.stat.s-failed .value { color: #B42318; }
+.stat.s-skipped     { background: #ECEFF2; border-color: #D4D9DE; }
+.stat.s-skipped .value { color: #5A6570; }
+.stat.s-postponed   { background: #F3E8FF; border-color: #E3D4FB; }
+.stat.s-postponed .value { color: #7C3AED; }
 .addbox {
   background: var(--surface); border: 1px solid var(--border); border-radius: .6rem;
   padding: 1rem; margin-bottom: 1.25rem;
@@ -103,7 +120,7 @@ h1 { font-size: 1.45rem; margin: 0 0 1rem; }
 .ytprev-sub { font-size: .85rem; margin-top: .15rem; }
 .ytprev-link { font-size: .82rem; display: inline-block; margin-top: .3rem; }
 /* Akcijski gumbi u tablici */
-button.act { border: 1px solid var(--border); background: var(--bg); color: var(--navy); border-radius: .35rem; padding: .2rem .5rem; font-size: .78rem; font-weight: 600; cursor: pointer; margin-right: .25rem; }
+button.act { border: 1px solid var(--border); background: var(--bg); color: var(--navy); border-radius: .35rem; padding: .2rem .5rem; font-size: .78rem; font-weight: 600; cursor: pointer; margin-right: .25rem; margin-bottom: .25rem; }
 button.act:hover { background: var(--surface); }
 button.act.del { color: var(--danger); border-color: #f3c9c5; }
 /* Video čelija u tablici: thumbnail + ID */
@@ -349,7 +366,7 @@ async function refresh(){
     const counts = data.counts || {};
     const order = ['queued','fetching','transcribing','processing','done','failed','postponed','skipped'];
     document.getElementById('stats').innerHTML = order.map(s =>
-      '<div class="stat"><div class="label">'+s+'</div><div class="value">'+(counts[s]||0)+'</div></div>'
+      '<div class="stat s-'+s+'"><div class="label">'+s+'</div><div class="value">'+(counts[s]||0)+'</div></div>'
     ).join('');
     const rows = (data.jobs||[]).map(j => {
       const vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';

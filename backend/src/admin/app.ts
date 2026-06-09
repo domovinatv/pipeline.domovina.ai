@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env } from '../types';
-import { countByState, countJobs, createJob, deleteJob, findActiveJobByYoutubeId, listJobs, updateJob } from '../db';
+import { countByState, countJobs, createJob, deleteJob, findActiveJobByYoutubeId, listJobs, restoreJob, softDeleteJob, updateJob } from '../db';
 import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
 import { layout, renderJobsPage } from './views';
 
@@ -54,7 +54,9 @@ admin.post('/jobs', async (c) => {
 });
 
 // Admin akcije po jobu (poziva ih tablica preko fetch-a; Basic Auth se nasljeđuje).
-//   delete   — obriši job iz queuea
+//   delete   — soft-delete (reverzibilno; redak ostaje strikethrough u listi)
+//   restore  — poništi soft-delete (vrati job u izvorno stanje)
+//   purge    — TRAJNO obriši redak iz baze (nepovratno; iza confirm-a u UI-u)
 //   skip     — state=skipped (nikad se ne claima)
 //   postpone — state=postponed (drži izvan queuea)
 //   requeue  — vrati u queued (iz skipped/postponed/failed), očisti grešku
@@ -63,6 +65,12 @@ admin.post('/jobs/:id/:action', async (c) => {
   const action = c.req.param('action');
   switch (action) {
     case 'delete':
+      await softDeleteJob(c.env.DB, id);
+      break;
+    case 'restore':
+      await restoreJob(c.env.DB, id);
+      break;
+    case 'purge':
       await deleteJob(c.env.DB, id);
       break;
     case 'skip':

@@ -2,7 +2,7 @@ import type { JobRow, JobState } from './types';
 import { newId, nowSec } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, done_at';
+  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, done_at, deleted_at';
 
 export interface CreateJobInput {
   youtubeId: string;
@@ -21,7 +21,7 @@ export async function findActiveJobByYoutubeId(
 ): Promise<JobRow | null> {
   const row = await db
     .prepare(
-      `SELECT ${COLS} FROM jobs WHERE youtube_id = ? AND state NOT IN ('failed','done','skipped') ORDER BY created_at DESC LIMIT 1`,
+      `SELECT ${COLS} FROM jobs WHERE youtube_id = ? AND deleted_at IS NULL AND state NOT IN ('failed','done','skipped') ORDER BY created_at DESC LIMIT 1`,
     )
     .bind(youtubeId)
     .first<JobRow>();
@@ -119,7 +119,7 @@ export async function countByState(db: D1Database): Promise<Record<string, numbe
 export async function claimJobs(db: D1Database, max: number): Promise<JobRow[]> {
   const n = Math.min(Math.max(max, 1), 25);
   const candidates = await db
-    .prepare(`SELECT ${COLS} FROM jobs WHERE state = 'queued' ORDER BY created_at ASC LIMIT ?`)
+    .prepare(`SELECT ${COLS} FROM jobs WHERE state = 'queued' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT ?`)
     .bind(n)
     .all<JobRow>();
   const claimed: JobRow[] = [];
@@ -127,7 +127,7 @@ export async function claimJobs(db: D1Database, max: number): Promise<JobRow[]> 
   for (const row of candidates.results ?? []) {
     const upd = await db
       .prepare(
-        `UPDATE jobs SET state='fetching', claimed_at=?, updated_at=?, attempts=attempts+1 WHERE id=? AND state='queued'`,
+        `UPDATE jobs SET state='fetching', claimed_at=?, updated_at=?, attempts=attempts+1 WHERE id=? AND state='queued' AND deleted_at IS NULL`,
       )
       .bind(ts, ts, row.id)
       .run();
@@ -188,6 +188,27 @@ export async function updateJob(
   return getJob(db, id);
 }
 
+// Soft-delete: označi redak obrisanim (reverzibilno). Claim/dedup ga ignoriraju,
+// admin ga prikazuje strikethrough. Izvorno `state` ostaje netaknuto za restore.
+export async function softDeleteJob(db: D1Database, id: string): Promise<boolean> {
+  const ts = nowSec();
+  const res = await db
+    .prepare(`UPDATE jobs SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`)
+    .bind(ts, ts, id)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+// Restore: poništi soft-delete (vrati job u listu u izvornom stanju).
+export async function restoreJob(db: D1Database, id: string): Promise<boolean> {
+  const res = await db
+    .prepare(`UPDATE jobs SET deleted_at=NULL, updated_at=? WHERE id=? AND deleted_at IS NOT NULL`)
+    .bind(nowSec(), id)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+// Trajno (nepovratno) brisanje retka iz baze.
 export async function deleteJob(db: D1Database, id: string): Promise<boolean> {
   const res = await db.prepare(`DELETE FROM jobs WHERE id = ?`).bind(id).run();
   return (res.meta.changes ?? 0) > 0;

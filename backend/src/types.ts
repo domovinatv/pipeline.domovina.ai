@@ -51,4 +51,5 @@ export interface JobRow {
   updated_at: number;
   claimed_at: number | null;
   done_at: number | null;
+  deleted_at: number | null; // soft-delete (reverzibilno); NULL = živ job
 }

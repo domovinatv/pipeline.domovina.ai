@@ -141,8 +141,15 @@ button.act.a-requeue  { color: #1D4ED8; border-color: #CDDDF6; }
 button.act.a-requeue:hover  { background: #E7EEF8; }
 button.act.a-delete   { color: #B42318; border-color: #F3C9C5; }
 button.act.a-delete:hover   { background: #F8E2E0; }
+button.act.a-restore  { color: #1D4ED8; border-color: #CDDDF6; }
+button.act.a-restore:hover  { background: #E7EEF8; }
+button.act.a-purge    { color: #B42318; border-color: #F3C9C5; }
+button.act.a-purge:hover    { background: #F8E2E0; }
 button.act:active { transform: translateY(1px); }
 button.act.busy { opacity: .45; pointer-events: none; }
+/* Soft-deleted redak: prekrižen + zatamnjen (akcijski gumbi ostaju čitljivi) */
+tr.deleted td { text-decoration: line-through; opacity: .55; }
+tr.deleted .act { text-decoration: none; opacity: 1; }
 /* Filter/search kontrole + pager */
 .controls select, .controls input {
   border: 1px solid var(--border); border-radius: .4rem; padding: .35rem .6rem;
@@ -312,6 +319,11 @@ function dur(s){ if(!s) return ''; s=Math.round(s); const h=Math.floor(s/3600), 
 function btn(id,action,label){ return '<button class="act a-'+action+'" data-id="'+esc(id)+'" data-act="'+action+'">'+label+'</button>'; }
 function actions(j){
   var b = [];
+  if (j.deleted_at) {   // soft-deleted: samo vrati ili trajno obriši
+    b.push(btn(j.id,'restore','↩ Vrati'));
+    b.push(btn(j.id,'purge','🗑 Trajno'));
+    return b.join('');
+  }
   if (j.state==='queued') { b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
   b.push(btn(j.id,'delete','✕'));
@@ -321,7 +333,8 @@ function actions(j){
 // Paging/filter stanje
 var pState='', pQ='', pLimit=50, pOffset=0, pTotal=0;
 async function act(id, action){
-  if (action==='delete' && !confirm('Obrisati ovaj job iz queuea?')) return;
+  // soft-delete (delete) je reverzibilno → bez potvrde; trajno (purge) → confirm.
+  if (action==='purge' && !confirm('Trajno obrisati ovaj job iz baze? Nepovratno.')) return;
   try { await fetch('/admin/jobs/'+id+'/'+action, { method:'POST' }); } catch(e) {}
   refresh();
 }
@@ -343,7 +356,7 @@ async function refresh(){
       const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
-      return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
+      return '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
     }).join('');
     const shown = (data.jobs||[]).length;
     document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="empty">'+((pState||pQ)?'Nema rezultata za filter.':'Nema jobova još. Dodaj prvi gore.')+'</td></tr>';

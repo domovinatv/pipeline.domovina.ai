@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env } from '../types';
 import { countByState, createJob, deleteJob, findActiveJobByYoutubeId, listJobs, updateJob } from '../db';
-import { extractYouTubeId, watchUrl } from '../util';
+import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
 import { layout, renderJobsPage } from './views';
 
 export const admin = new Hono<{ Bindings: Env }>();
@@ -40,10 +40,12 @@ admin.post('/jobs', async (c) => {
   // Dedup: ako već postoji aktivan job za isti video, ne stvaraj duplikat.
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
   if (!existing) {
+    const meta = await fetchOEmbed(youtubeId); // public → naslov+kanal; unlisted → null
     await createJob(c.env.DB, {
       youtubeId,
       youtubeUrl: watchUrl(youtubeId),
-      title,
+      title: title || meta?.title || null,
+      channel: meta?.channel ?? null,
       source: 'admin',
       priceCents: 0,
     });

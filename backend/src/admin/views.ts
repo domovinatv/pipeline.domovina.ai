@@ -106,6 +106,10 @@ h1 { font-size: 1.45rem; margin: 0 0 1rem; }
 button.act { border: 1px solid var(--border); background: var(--bg); color: var(--navy); border-radius: .35rem; padding: .2rem .5rem; font-size: .78rem; font-weight: 600; cursor: pointer; margin-right: .25rem; }
 button.act:hover { background: var(--surface); }
 button.act.del { color: var(--danger); border-color: #f3c9c5; }
+/* Video čelija u tablici: thumbnail + ID */
+.vidcell { display: flex; align-items: center; gap: .5rem; }
+.rthumb { width: 88px; height: 50px; object-fit: cover; border-radius: .3rem; flex: none; background: var(--surface); }
+td .sub { font-size: .8rem; margin-top: .15rem; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: .5rem; background: var(--bg); }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -189,7 +193,7 @@ export function renderJobsPage(): string {
 <div class="table-wrap">
   <table>
     <thead><tr>
-      <th>Dodано</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th>Akcije</th>
+      <th>Dodano</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th>Akcije</th>
     </tr></thead>
     <tbody id="rows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
   </table>
@@ -243,6 +247,8 @@ const STATE_CLASS = { done:'ok', failed:'bad', queued:'neutral', skipped:'neutra
 function pill(s){ return '<span class="pill '+(STATE_CLASS[s]||'warn')+'">'+s+'</span>'; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmt(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleString('hr-HR'); }
+function thumb(id){ return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
+function dur(s){ if(!s) return ''; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; const p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
 // Gumbi nose data-id/data-act (bez inline onclicka) → delegirani listener niže.
 function btn(id,action,label,cls){ return '<button class="act '+(cls||'')+'" data-id="'+esc(id)+'" data-act="'+action+'">'+label+'</button>'; }
 function actions(j){
@@ -268,10 +274,12 @@ async function refresh(){
       '<div class="stat"><div class="label">'+s+'</div><div class="value">'+(counts[s]||0)+'</div></div>'
     ).join('');
     const rows = (data.jobs||[]).map(j => {
-      const yt = '<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a>';
+      const vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';
+      const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
+      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
-      return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+yt+'</td><td>'+esc(j.title||'')+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
+      return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
     }).join('');
     document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="empty">Nema jobova još. Dodaj prvi gore.</td></tr>';
     document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');

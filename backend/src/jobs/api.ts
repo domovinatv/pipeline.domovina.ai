@@ -10,7 +10,7 @@ import {
   listJobs,
   updateJob,
 } from '../db';
-import { extractYouTubeId, watchUrl } from '../util';
+import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
 
 export const jobsApi = new Hono<{ Bindings: Env }>();
 
@@ -34,10 +34,12 @@ jobsApi.post('/', async (c) => {
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
   if (existing) return c.json({ job: existing, deduped: true });
   const priceCents = Number(c.env.PRICE_CENTS ?? '0') || 0;
+  const meta = await fetchOEmbed(youtubeId); // public → naslov+kanal; unlisted → null (bridge backfilla)
   const job = await createJob(c.env.DB, {
     youtubeId,
     youtubeUrl: watchUrl(youtubeId),
-    title: body.title ?? null,
+    title: body.title || meta?.title || null,
+    channel: meta?.channel ?? null,
     source: 'api',
     priceCents,
   });
@@ -66,12 +68,15 @@ jobsApi.get('/:id', async (c) => {
   return c.json({ job });
 });
 
-// Bridge javlja napredak: state / detail_url / error.
+// Bridge javlja napredak: state / detail_url / error + metapodaci iz info.json.
 jobsApi.patch('/:id', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     state?: string;
     detail_url?: string | null;
     error?: string | null;
+    title?: string | null;
+    channel?: string | null;
+    duration_seconds?: number | null;
   };
   if (body.state && !BRIDGE_SETTABLE.includes(body.state as never)) {
     return c.json({ error: `state '${body.state}' nije dozvoljen` }, 400);
@@ -80,6 +85,9 @@ jobsApi.patch('/:id', async (c) => {
     state: body.state as never,
     detailUrl: body.detail_url,
     error: body.error,
+    title: body.title,
+    channel: body.channel,
+    durationSeconds: body.duration_seconds,
   });
   if (!job) return c.json({ error: 'not found' }, 404);
   return c.json({ job });

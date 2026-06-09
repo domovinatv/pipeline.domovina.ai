@@ -51,6 +51,24 @@ function downloaded(youtubeId) {
   }
 }
 
+// Pravi metapodaci iz yt-dlp info.json (radi i za unlisted — yt-dlp ima cookieje).
+function readMeta(youtubeId) {
+  try {
+    const f = fs
+      .readdirSync(UNLISTED_DIR)
+      .find((x) => x.includes('_yt_' + youtubeId) && x.endsWith('.info.json'));
+    if (!f) return null;
+    const j = JSON.parse(fs.readFileSync(path.join(UNLISTED_DIR, f), 'utf-8'));
+    return {
+      title: j.title || j.fulltitle || null,
+      channel: j.channel || j.uploader || null,
+      duration_seconds: Number.isFinite(j.duration) ? Math.round(j.duration) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 (async () => {
   const { jobs } = await api('POST', '/api/jobs/claim', { max: CLAIM_MAX });
   if (!jobs.length) {
@@ -67,8 +85,10 @@ function downloaded(youtubeId) {
     // fetch.js zna exit-ati 0 i kod anti-bot ABORT-a → ne vjeruj exit kodu,
     // provjeri je li info.json stvarno na disku.
     if (downloaded(job.youtube_id)) {
-      await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing' });
-      console.log(`  ✅ skinuto → transcribing`);
+      // Backfill pravih metapodataka iz info.json (autoritativno; radi i za unlisted).
+      const meta = readMeta(job.youtube_id) || {};
+      await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', ...meta });
+      console.log(`  ✅ skinuto → transcribing${meta.channel ? ' (' + meta.channel + ')' : ''}`);
     } else {
       await api('PATCH', `/api/jobs/${job.id}`, {
         state: 'failed',

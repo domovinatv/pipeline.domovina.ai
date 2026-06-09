@@ -2,12 +2,13 @@ import type { JobRow, JobState } from './types';
 import { newId, nowSec } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, title, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, done_at';
+  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, done_at';
 
 export interface CreateJobInput {
   youtubeId: string;
   youtubeUrl: string;
   title?: string | null;
+  channel?: string | null;
   source?: string;
   apiKeyId?: string | null;
   priceCents?: number;
@@ -32,14 +33,15 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
   const ts = nowSec();
   await db
     .prepare(
-      `INSERT INTO jobs (id, youtube_id, youtube_url, title, source, api_key_id, state, visibility, price_cents, paid, attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, 0, ?, ?)`,
+      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, 0, ?, ?)`,
     )
     .bind(
       id,
       input.youtubeId,
       input.youtubeUrl,
       input.title ?? null,
+      input.channel ?? null,
       input.source ?? 'admin',
       input.apiKeyId ?? null,
       input.priceCents ?? 0,
@@ -118,6 +120,9 @@ export interface UpdateJobInput {
   state?: JobState;
   detailUrl?: string | null;
   error?: string | null;
+  title?: string | null;
+  channel?: string | null;
+  durationSeconds?: number | null;
 }
 
 export async function updateJob(
@@ -142,6 +147,18 @@ export async function updateJob(
   if (input.error !== undefined) {
     sets.push('error=?');
     binds.push(input.error);
+  }
+  if (input.title !== undefined) {
+    sets.push('title=?');
+    binds.push(input.title);
+  }
+  if (input.channel !== undefined) {
+    sets.push('channel=?');
+    binds.push(input.channel);
+  }
+  if (input.durationSeconds !== undefined) {
+    sets.push('duration_seconds=?');
+    binds.push(input.durationSeconds);
   }
   binds.push(id);
   await db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id=?`).bind(...binds).run();

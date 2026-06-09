@@ -38,6 +38,24 @@ export async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Server-side oEmbed dohvat (public videi; unlisted vraća 401 → null). Bez API ključa.
+// Vraća naslov + kanal (author_name). Non-blocking — pozivatelj hvata null.
+export async function fetchOEmbed(
+  youtubeId: string,
+): Promise<{ title?: string; channel?: string } | null> {
+  try {
+    const u =
+      'https://www.youtube.com/oembed?format=json&url=' +
+      encodeURIComponent('https://www.youtube.com/watch?v=' + youtubeId);
+    const r = await fetch(u);
+    if (!r.ok) return null;
+    const j = (await r.json()) as { title?: string; author_name?: string };
+    return { title: j.title, channel: j.author_name };
+  } catch {
+    return null;
+  }
+}
+
 export function escapeHtml(s: unknown): string {
   return String(s ?? '')
     .replace(/&/g, '&amp;')

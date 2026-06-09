@@ -36,6 +36,8 @@ export interface JobRow {
   youtube_id: string;
   youtube_url: string;
   title: string | null;
+  channel: string | null;
+  duration_seconds: number | null;
   source: string;
   api_key_id: string | null;
   state: JobState;

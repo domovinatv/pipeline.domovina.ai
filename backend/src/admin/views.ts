@@ -78,19 +78,22 @@ h1 { font-size: 1.45rem; margin: 0 0 1rem; }
   background: var(--surface); border: 1px solid var(--border); border-radius: .6rem;
   padding: 1rem; margin-bottom: 1.25rem;
 }
-.addbox form { display: flex; gap: .6rem; flex-wrap: wrap; align-items: flex-end; }
+.addbox form { display: flex; flex-direction: column; gap: .7rem; align-items: stretch; }
 .addbox .field { display: flex; flex-direction: column; gap: .25rem; }
 .addbox label { font-size: .75rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .addbox input {
   border: 1px solid var(--border); border-radius: .4rem; padding: .5rem .75rem;
   font-size: .95rem; font-family: inherit; background: var(--bg); color: var(--navy);
+  width: 100%;
 }
-.addbox input.url { min-width: 24rem; }
 .addbox button {
-  border: 0; border-radius: .4rem; padding: .55rem 1.2rem; font-size: .95rem;
+  border: 0; border-radius: .4rem; padding: .6rem 1.2rem; font-size: .95rem;
   font-weight: 700; cursor: pointer; background: var(--navy); color: #fff;
+  align-self: flex-start; display: inline-flex; align-items: center; gap: .5rem;
 }
 .addbox button:hover { background: #013a86; }
+/* Bijeli "+" — emoji ➕ ignorira CSS color (ostaje tamno siv na navy); plain glyph nasljeđuje #fff */
+.addbox button .plus { color: #fff; font-weight: 900; font-size: 1.15em; line-height: 1; }
 .addbox .hint { font-size: .8rem; color: var(--muted); margin-top: .5rem; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: .5rem; background: var(--bg); }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
@@ -154,7 +157,7 @@ export function renderJobsPage(): string {
       <label for="title">Naslov (opcijski)</label>
       <input id="title" name="title" placeholder="npr. Intervju — gost">
     </div>
-    <button type="submit">➕ Dodaj u queue</button>
+    <button type="submit"><span class="plus">+</span> Dodaj u queue</button>
   </form>
   <div class="hint">Public ili unlisted — svejedno. Video se obradi identično, ostaje neindeksiran, dostupan samo na <span class="mono">domovina.ai/v/{id}</span>.</div>
 </div>
@@ -174,6 +177,38 @@ export function renderJobsPage(): string {
 </div>
 
 <script>
+// ── Auto-prefill naslova iz YouTube oEmbed-a (public videi; bez API ključa, CORS OK).
+// Unlisted vraća 401 → tiho preskačemo; bridge svejedno backfilla pravi naslov iz info.json.
+(function(){
+  const urlEl = document.getElementById('url');
+  const titleEl = document.getElementById('title');
+  if (!urlEl || !titleEl) return;
+  let autoFilled = '';                       // zadnji auto-upisani naslov (da ne gazimo ručni unos)
+  let timer = null, lastId = '';
+  function ytId(s){
+    s = (s||'').trim();
+    if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+    const m = s.match(/[?&]v=([A-Za-z0-9_-]{11})|youtu\.be\/([A-Za-z0-9_-]{11})|\/shorts\/([A-Za-z0-9_-]{11})|\/live\/([A-Za-z0-9_-]{11})/);
+    return m ? (m[1]||m[2]||m[3]||m[4]) : '';
+  }
+  async function prefill(){
+    const id = ytId(urlEl.value);
+    if (!id || id === lastId) return;
+    lastId = id;
+    // Ne gazi ručno upisan naslov (prazno ili još uvijek prethodni auto-fill = slobodno)
+    if (titleEl.value && titleEl.value !== autoFilled) return;
+    try {
+      const u = 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id);
+      const r = await fetch(u);
+      if (!r.ok) return;                      // 401 unlisted / 404 → preskoči
+      const j = await r.json();
+      if (j && j.title) { titleEl.value = j.title; autoFilled = j.title; }
+    } catch(e) {}                             // CORS/mreža → tiho
+  }
+  urlEl.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(prefill, 400); });
+  urlEl.addEventListener('change', prefill);
+})();
+
 const STATE_CLASS = { done:'ok', failed:'bad', queued:'neutral' };
 function pill(s){ return '<span class="pill '+(STATE_CLASS[s]||'warn')+'">'+s+'</span>'; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

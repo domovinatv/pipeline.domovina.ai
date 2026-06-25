@@ -152,10 +152,14 @@ tbody tr:hover { background: var(--surface); }
 .pill.failed      { background: #F8E2E0; color: #B42318; }   /* crvena — greška */
 .pill.skipped     { background: #ECEFF2; color: #5A6570; }   /* siva — preskočeno */
 .pill.postponed   { background: #F3E8FF; color: #7C3AED; }   /* ljubičasta — odgođeno */
-/* Status kao klikabilni toggle (otvara per-korak pipeline prikaz) */
-.pillbtn { font: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
-.pillbtn .caret { font-size: .7em; margin-left: .2rem; opacity: .6; }
-.pillbtn[aria-expanded="true"] .caret { opacity: 1; }
+/* "koraci" toggle ispod statusa — otvara per-korak pipeline prikaz */
+.pillbtn {
+  font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--bg);
+  color: var(--navy); padding: .15rem .5rem; margin-top: .35rem; border-radius: .35rem;
+  font-size: .76rem; font-weight: 700; white-space: nowrap; display: inline-flex; align-items: center; gap: .25rem;
+}
+.pillbtn:hover { background: var(--surface); }
+.pillbtn[aria-expanded="true"] { background: var(--navy); color: #fff; border-color: var(--navy); }
 /* Expandable redak s koracima */
 tr.detail-row > td { background: var(--surface); padding: .4rem 1rem 1rem; }
 .steps-head { font-size: .8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: .3rem 0 .6rem; }
@@ -404,9 +408,10 @@ function actions(j){
   return b.join('');
 }
 
-// Status čelija = klikabilni toggle koji otvara per-korak pipeline prikaz ispod retka.
+// Status čelija = pill + očit "koraci" gumb koji otvara per-korak pipeline prikaz ispod retka.
 function statusCell(j){
-  return '<button class="pillbtn" data-jobid="'+esc(j.id)+'" aria-expanded="'+(expandedId===j.id?'true':'false')+'" title="Prikaži korake pipelinea">'+pill(j.state)+'<span class="caret">▾</span></button>';
+  var open = expandedId===j.id;
+  return pill(j.state)+'<div><button class="pillbtn" data-jobid="'+esc(j.id)+'" aria-expanded="'+(open?'true':'false')+'" title="Prikaži korake pipelinea">'+(open?'▾':'▸')+' koraci</button></div>';
 }
 // Detail redak (colspan preko cijele tablice) — sadrži step-tracker, lazy-loadan.
 function detailRow(j){
@@ -440,7 +445,11 @@ async function loadSteps(id){
 function toggleSteps(id){
   expandedId = (expandedId===id) ? '' : id;
   document.querySelectorAll('tr.detail-row').forEach(function(tr){ tr.hidden = tr.dataset.detail!==expandedId; });
-  document.querySelectorAll('button.pillbtn').forEach(function(b){ b.setAttribute('aria-expanded', b.dataset.jobid===expandedId ? 'true':'false'); });
+  document.querySelectorAll('button.pillbtn').forEach(function(b){
+    var on = b.dataset.jobid===expandedId;
+    b.setAttribute('aria-expanded', on ? 'true':'false');
+    b.textContent = (on?'▾':'▸')+' koraci';
+  });
   if (expandedId) loadSteps(expandedId);
 }
 

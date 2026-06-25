@@ -175,6 +175,8 @@ tr.detail-row > td { background: var(--surface); padding: .4rem 1rem 1rem; }
 .steps .s-label { font-weight: 700; font-size: .92rem; }
 .steps .s-note { color: var(--muted); font-size: .78rem; margin-top: .05rem; }
 .steps li.is-pending .s-label { color: var(--muted); }
+.steps .s-open { flex: none; font-size: .78rem; font-weight: 700; text-decoration: none; color: var(--navy); border: 1px solid var(--border); border-radius: .3rem; padding: .1rem .4rem; white-space: nowrap; }
+.steps .s-open:hover { background: var(--bg); border-color: var(--navy); }
 .steps .s-badge { margin-left: .5rem; flex: none; }
 .s-badge.done    { background: #E0F1E5; color: var(--success); }
 .s-badge.pending { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
@@ -425,9 +427,11 @@ function renderSteps(steps){
   if (!steps || !steps.length) return '<div class="steps-loading">Nema podataka o koracima.</div>';
   return '<ul class="steps">'+steps.map(function(s){
     var cls = s.state;   // done | pending | skipped
+    var link = s.url ? '<a class="s-open" href="'+esc(s.url)+'" target="_blank" rel="noopener" title="Otvori u novom tabu">↗ otvori</a>' : '';
     return '<li class="is-'+cls+'">'+
       '<span class="dot '+cls+'">'+stepGlyph(s.state)+'</span>'+
       '<div class="s-main"><div class="s-label">'+esc(s.label)+'</div><div class="s-note">'+esc(s.note)+'</div></div>'+
+      link+
       '<span class="pill s-badge '+cls+'">'+stepBadge(s.state)+'</span>'+
     '</li>';
   }).join('')+'</ul>';

@@ -85,6 +85,8 @@ export interface StepStatus {
   note: string;
   optional: boolean;
   state: StepState;
+  /** Link na rezultat koraka (CDN artefakt / live stranica); null ako još nema što otvoriti. */
+  url: string | null;
 }
 
 export interface PipelineReport {
@@ -128,16 +130,20 @@ export async function buildPipelineReport(
   const steps: StepStatus[] = PIPELINE_STEPS.map((s, i) => {
     const present = probes[i];
     const state: StepState = present ? 'done' : s.optional ? 'skipped' : 'pending';
-    return { key: s.key, label: s.label, note: s.note, optional: !!s.optional, state };
+    // Link nudimo samo kad artefakt stvarno postoji (inače bi 404-ao).
+    const url = present && s.artifact ? `${cdnBase}/data/${job.youtube_id}/${s.artifact}` : null;
+    return { key: s.key, label: s.label, note: s.note, optional: !!s.optional, state, url };
   });
 
   // Završni izvedeni korak: objavljeno na frontendu (job done + detail_url).
+  const liveDone = job.state === 'done' && !!job.detail_url;
   steps.push({
     key: 'live',
     label: 'Objavljeno na domovina.ai',
     note: 'Video je dostupan na /v/{id} (članak live na CDN-u)',
     optional: false,
-    state: job.state === 'done' && job.detail_url ? 'done' : 'pending',
+    state: liveDone ? 'done' : 'pending',
+    url: liveDone ? job.detail_url : null,
   });
 
   return {

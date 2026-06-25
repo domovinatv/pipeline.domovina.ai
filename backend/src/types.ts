@@ -6,6 +6,7 @@ export interface Env {
   INGEST_KEY?: string;
   // Vars (wrangler.toml [vars]):
   SITE_BASE?: string; // https://domovina.ai
+  CDN_BASE?: string; // https://cdn.domovina.ai — izvor istine za per-korak artefakte
   PRICE_CENTS?: string; // default cijena u centima
 }
 

@@ -10,6 +10,7 @@ import {
   deleteApiKey,
   deleteJob,
   findActiveJobByYoutubeId,
+  getJob,
   listApiKeys,
   listJobs,
   restoreJob,
@@ -18,6 +19,7 @@ import {
   updateJob,
 } from '../db';
 import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
+import { buildPipelineReport } from '../pipeline';
 import { layout, renderJobsPage, renderKeysPage } from './views';
 
 export const admin = new Hono<{ Bindings: Env }>();
@@ -157,4 +159,14 @@ admin.get('/api/jobs', async (c) => {
     countJobs(c.env.DB, { state, q }), // total za trenutni filter → pager
   ]);
   return c.json({ counts, jobs, total, limit, offset });
+});
+
+// Granularni pipeline status za jedan job: probe CDN artefakte i vrati po-korak
+// stanje (done/pending/skipped). Puni expandable "koraci" prikaz u tablici.
+admin.get('/api/jobs/:id/pipeline', async (c) => {
+  const job = await getJob(c.env.DB, c.req.param('id'));
+  if (!job) return c.json({ error: 'not found' }, 404);
+  const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
+  const report = await buildPipelineReport(cdnBase, job);
+  return c.json(report);
 });

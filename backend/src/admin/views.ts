@@ -152,6 +152,30 @@ tbody tr:hover { background: var(--surface); }
 .pill.failed      { background: #F8E2E0; color: #B42318; }   /* crvena — greška */
 .pill.skipped     { background: #ECEFF2; color: #5A6570; }   /* siva — preskočeno */
 .pill.postponed   { background: #F3E8FF; color: #7C3AED; }   /* ljubičasta — odgođeno */
+/* Status kao klikabilni toggle (otvara per-korak pipeline prikaz) */
+.pillbtn { font: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
+.pillbtn .caret { font-size: .7em; margin-left: .2rem; opacity: .6; }
+.pillbtn[aria-expanded="true"] .caret { opacity: 1; }
+/* Expandable redak s koracima */
+tr.detail-row > td { background: var(--surface); padding: .4rem 1rem 1rem; }
+.steps-head { font-size: .8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: .3rem 0 .6rem; }
+.steps { list-style: none; margin: 0; padding: 0; max-width: 38rem; }
+.steps li { position: relative; display: flex; align-items: flex-start; gap: .6rem; padding: .3rem 0 .3rem .2rem; }
+/* Vertikalna spojnica između točkica koraka */
+.steps li:not(:last-child)::before { content: ""; position: absolute; left: .75rem; top: 1.5rem; bottom: -.3rem; width: 2px; background: var(--border); }
+.steps .dot { position: relative; z-index: 1; width: 1.2rem; height: 1.2rem; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: .72rem; font-weight: 900; color: #fff; }
+.steps .dot.done    { background: var(--success); }
+.steps .dot.pending { background: #fff; border: 2px dashed #CBD5E1; color: #94A3B8; }
+.steps .dot.skipped { background: #EDE9FE; border: 2px solid #DDD0FB; color: #7C3AED; }
+.steps .s-main { flex: 1; min-width: 0; }
+.steps .s-label { font-weight: 700; font-size: .92rem; }
+.steps .s-note { color: var(--muted); font-size: .78rem; margin-top: .05rem; }
+.steps li.is-pending .s-label { color: var(--muted); }
+.steps .s-badge { margin-left: .5rem; flex: none; }
+.s-badge.done    { background: #E0F1E5; color: var(--success); }
+.s-badge.pending { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.s-badge.skipped { background: #F3E8FF; color: #7C3AED; }
+.steps-loading { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
 /* Akcijski gumbi: boja akcije == boja stanja koje proizvodi (vizualna veza) */
 button.act.a-skip     { color: #5A6570; border-color: #D4D9DE; }
 button.act.a-skip:hover     { background: #ECEFF2; }
@@ -380,8 +404,48 @@ function actions(j){
   return b.join('');
 }
 
+// Status čelija = klikabilni toggle koji otvara per-korak pipeline prikaz ispod retka.
+function statusCell(j){
+  return '<button class="pillbtn" data-jobid="'+esc(j.id)+'" aria-expanded="'+(expandedId===j.id?'true':'false')+'" title="Prikaži korake pipelinea">'+pill(j.state)+'<span class="caret">▾</span></button>';
+}
+// Detail redak (colspan preko cijele tablice) — sadrži step-tracker, lazy-loadan.
+function detailRow(j){
+  return '<tr class="detail-row" data-detail="'+esc(j.id)+'"'+(expandedId===j.id?'':' hidden')+'>'+
+    '<td colspan="6"><div class="steps-head">Pipeline koraci</div>'+
+    '<div id="steps-'+esc(j.id)+'"><div class="steps-loading">Učitavam korake…</div></div></td></tr>';
+}
+function stepBadge(st){ return st==='done'?'gotovo':st==='skipped'?'preskočeno':'čeka'; }
+function stepGlyph(st){ return st==='done'?'✓':st==='skipped'?'–':''; }
+function renderSteps(steps){
+  if (!steps || !steps.length) return '<div class="steps-loading">Nema podataka o koracima.</div>';
+  return '<ul class="steps">'+steps.map(function(s){
+    var cls = s.state;   // done | pending | skipped
+    return '<li class="is-'+cls+'">'+
+      '<span class="dot '+cls+'">'+stepGlyph(s.state)+'</span>'+
+      '<div class="s-main"><div class="s-label">'+esc(s.label)+'</div><div class="s-note">'+esc(s.note)+'</div></div>'+
+      '<span class="pill s-badge '+cls+'">'+stepBadge(s.state)+'</span>'+
+    '</li>';
+  }).join('')+'</ul>';
+}
+async function loadSteps(id){
+  var host = document.getElementById('steps-'+id);
+  if (!host) return;
+  try {
+    var r = await fetch('/admin/api/jobs/'+id+'/pipeline', { headers: { 'accept':'application/json' } });
+    if (!r.ok) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; return; }
+    var data = await r.json();
+    host.innerHTML = renderSteps(data.steps);
+  } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; }
+}
+function toggleSteps(id){
+  expandedId = (expandedId===id) ? '' : id;
+  document.querySelectorAll('tr.detail-row').forEach(function(tr){ tr.hidden = tr.dataset.detail!==expandedId; });
+  document.querySelectorAll('button.pillbtn').forEach(function(b){ b.setAttribute('aria-expanded', b.dataset.jobid===expandedId ? 'true':'false'); });
+  if (expandedId) loadSteps(expandedId);
+}
+
 // Paging/filter stanje
-var pState='', pQ='', pLimit=50, pOffset=0, pTotal=0;
+var expandedId='', pState='', pQ='', pLimit=50, pOffset=0, pTotal=0;
 async function act(id, action){
   // soft-delete (delete) je reverzibilno → bez potvrde; trajno (purge) → confirm.
   if (action==='purge' && !confirm('Trajno obrisati ovaj job iz baze? Nepovratno.')) return;
@@ -406,7 +470,8 @@ async function refresh(){
       const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
-      return '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+pill(j.state)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
+      var row = '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
+      return row + detailRow(j);
     }).join('');
     const shown = (data.jobs||[]).length;
     document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="empty">'+((pState||pQ)?'Nema rezultata za filter.':'Nema jobova još. Dodaj prvi gore.')+'</td></tr>';
@@ -415,6 +480,8 @@ async function refresh(){
     document.getElementById('pPrev').disabled = pOffset <= 0;
     document.getElementById('pNext').disabled = pOffset + pLimit >= pTotal;
     document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');
+    // Ako je neki redak otvoren, re-loadaj njegove korake (rows innerHTML je upravo prepisan).
+    if (expandedId && document.getElementById('steps-'+expandedId)) loadSteps(expandedId);
   } catch(e) {}
 }
 // Filter/search/page-size kontrole
@@ -426,6 +493,8 @@ document.getElementById('pPrev').addEventListener('click', function(){ if(pOffse
 document.getElementById('pNext').addEventListener('click', function(){ if(pOffset+pLimit<pTotal){ pOffset+=pLimit; refresh(); } });
 // Akcijski gumbi (data-id/data-act) + busy feedback na klik.
 document.getElementById('rows').addEventListener('click', function(e){
+  const tog = e.target.closest('button.pillbtn');
+  if (tog) { toggleSteps(tog.dataset.jobid); return; }
   const b = e.target.closest('button.act');
   if (b) { b.classList.add('busy'); act(b.dataset.id, b.dataset.act); }
 });

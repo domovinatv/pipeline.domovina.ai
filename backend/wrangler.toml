@@ -31,6 +31,9 @@ migrations_dir = "migrations"
 [vars]
 # Bazni URL frontenda gdje živi gotov video (za detail_url = {SITE_BASE}/v/{id}).
 SITE_BASE = "https://domovina.ai"
+# CDN gdje pipeline objavljuje per-video artefakte (data/{id}/...). Admin probe-a
+# ove ključeve da pokaže kroz koje je korake run_pipeline.sh video stvarno prošao.
+CDN_BASE = "https://cdn.domovina.ai"
 # Default cijena obrade u centima (billing skela; "0" = besplatno / admin put).
 PRICE_CENTS = "100"
 

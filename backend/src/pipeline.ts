@@ -62,9 +62,12 @@ export const PIPELINE_STEPS: PipelineStep[] = [
   {
     key: 'magisterium',
     label: 'Magisterium AI',
-    artifact: 'article.magisterium_full_v2.json',
+    // Produkcijski put je MCP hibrid (prep → chat → assemble) → article.magisterium.json,
+    // NE API skripta enrich_magisterium_full.js (.magisterium_full_v2.json — nije u upotrebi).
+    // Vidi fetch.domovina.tv/docs/PIPELINE_FULL.md §2.3 + MAGISTERIUM_MCP_RUN.md.
+    artifact: 'article.magisterium.json',
     optional: true,
-    note: 'Teološko obogaćivanje (KORAK 8.5, --with-magisterium)',
+    note: 'Teološko obogaćivanje preko Magisterium MCP (KORAK 8.5)',
   },
   {
     key: 'video',

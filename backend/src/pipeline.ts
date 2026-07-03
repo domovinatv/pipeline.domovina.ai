@@ -111,6 +111,18 @@ async function artifactExists(cdnBase: string, youtubeId: string, artifact: stri
 }
 
 /**
+ * Je li epizoda već objavljena na domovina.ai? Izvor istine je CDN, ne naš queue:
+ * članak (`article.json`) je artefakt koji ide live na `/v/{id}`. Ako postoji,
+ * video je već prošao glavni pipeline i objavljen — čak i ako u NAŠOJ bazi nema
+ * joba (npr. epizoda obrađena kroz redovni kanal, a ne ovaj ad-hoc queue). Zato
+ * lokalni dedup (findActiveJobByYoutubeId) nije dovoljan; ova provjera hvata
+ * duplikate koje bi inače nepotrebno ponovno obradili.
+ */
+export async function isPublishedOnDomovina(cdnBase: string, youtubeId: string): Promise<boolean> {
+  return artifactExists(cdnBase, youtubeId, 'article.json');
+}
+
+/**
  * Sastavi izvještaj o koracima za jedan video. Probe-ovi idu paralelno.
  * Logika statusa po koraku:
  *   artefakt postoji            → done
@@ -120,6 +132,7 @@ async function artifactExists(cdnBase: string, youtubeId: string, artifact: stri
 export async function buildPipelineReport(
   cdnBase: string,
   job: { youtube_id: string; state: string; detail_url: string | null },
+  siteBase?: string,
 ): Promise<PipelineReport> {
   const probes = await Promise.all(
     PIPELINE_STEPS.map((s) =>
@@ -135,15 +148,20 @@ export async function buildPipelineReport(
     return { key: s.key, label: s.label, note: s.note, optional: !!s.optional, state, url };
   });
 
-  // Završni izvedeni korak: objavljeno na frontendu (job done + detail_url).
-  const liveDone = job.state === 'done' && !!job.detail_url;
+  // Završni izvedeni korak: objavljeno na frontendu. Izvor istine je CDN, ne naš
+  // job state — epizoda je live čim članak postoji na CDN-u, i onda kad job kod
+  // nas nije 'done' (npr. dodana u ad-hoc queue iako je već prošla glavni pipeline).
+  const articlePresent = steps.find((s) => s.key === 'article')?.state === 'done';
+  const liveDone = (job.state === 'done' && !!job.detail_url) || articlePresent;
+  const base = (siteBase || 'https://domovina.ai').replace(/\/$/, '');
+  const liveUrl = job.detail_url || (articlePresent ? `${base}/v/${job.youtube_id}` : null);
   steps.push({
     key: 'live',
     label: 'Objavljeno na domovina.ai',
     note: 'Video je dostupan na /v/{id} (članak live na CDN-u)',
     optional: false,
     state: liveDone ? 'done' : 'pending',
-    url: liveDone ? job.detail_url : null,
+    url: liveDone ? liveUrl : null,
   });
 
   return {

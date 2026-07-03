@@ -263,6 +263,42 @@ export function layout(title: string, body: string): string {
 </body></html>`;
 }
 
+// Potvrdna stranica kad se dodaje epizoda koja je VEĆ objavljena na domovina.ai
+// (CDN artefakt članka postoji, iako u našem queueu nema aktivnog joba). Ne
+// queueamo tiho duplikat — pokažemo link na postojeću epizodu + escape hatch
+// "svejedno dodaj" (POST natrag s force=1) ako admin ipak želi ponovnu obradu.
+export function renderAlreadyPublishedPage(opts: {
+  youtubeId: string;
+  siteBase: string;
+  rawUrl: string;
+  title: string | null;
+}): string {
+  const base = opts.siteBase.replace(/\/$/, '');
+  const liveUrl = `${base}/v/${opts.youtubeId}`;
+  const body = `
+<h1>Epizoda je već objavljena na domovina.ai</h1>
+<p>Video <span class="mono">${escapeHtml(opts.youtubeId)}</span> je već prošao pipeline —
+članak i artefakti postoje na CDN-u, pa je epizoda dostupna. Nema je smisla ponovno
+obrađivati (troši resurse i ne mijenja rezultat).</p>
+<div class="ytprev" style="margin:1rem 0;">
+  <img src="https://i.ytimg.com/vi/${escapeHtml(opts.youtubeId)}/mqdefault.jpg" alt="">
+  <div class="ytprev-meta">
+    <div class="ytprev-title">${escapeHtml(opts.title || opts.youtubeId)}</div>
+    <a class="ytprev-link" href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener">▶ otvori na domovina.ai</a>
+  </div>
+</div>
+<p style="display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
+  <a class="tab" href="/admin">← natrag na queue</a>
+  <form method="POST" action="/admin/jobs" style="margin:0;">
+    <input type="hidden" name="url" value="${escapeHtml(opts.rawUrl)}">
+    <input type="hidden" name="title" value="${escapeHtml(opts.title || '')}">
+    <input type="hidden" name="force" value="1">
+    <button class="act a-requeue" type="submit">Svejedno dodaj u queue (ponovna obrada)</button>
+  </form>
+</p>`;
+  return layout('DOMOVINA Pipeline — epizoda već postoji', body);
+}
+
 export function statePill(state: string): string {
   const cls =
     state === 'done' ? 'ok' : state === 'failed' ? 'bad' : state === 'queued' ? 'neutral' : 'warn';

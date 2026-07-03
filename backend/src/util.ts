@@ -1,6 +1,7 @@
 // Izvuci 11-znamenkasti YouTube ID iz URL-a ili sirovog ID-a.
 // YT ID je [A-Za-z0-9_-]{11} i SMIJE počinjati s '-' (npr. -N3jzopLGc4).
-// Podržava: watch?v=, youtu.be/, /shorts/, /embed/, /live/ i goli ID.
+// Podržava: watch?v=, youtu.be/, /shorts/, /embed/, /live/, domovina.ai /v/{id}
+// (isti ID kao YouTube — korisnik često zalijepi baš tu poveznicu) i goli ID.
 export function extractYouTubeId(input: string): string | null {
   const s = (input || '').trim();
   if (!s) return null;
@@ -12,6 +13,7 @@ export function extractYouTubeId(input: string): string | null {
     /\/shorts\/([A-Za-z0-9_-]{11})/,
     /\/embed\/([A-Za-z0-9_-]{11})/,
     /\/live\/([A-Za-z0-9_-]{11})/,
+    /\/v\/([A-Za-z0-9_-]{11})/, // domovina.ai/v/{id} (front-end poveznica na epizodu)
   ];
   for (const re of patterns) {
     const m = s.match(re);

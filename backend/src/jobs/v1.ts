@@ -10,6 +10,7 @@ import {
   touchApiKey,
 } from '../db';
 import { extractYouTubeId, fetchOEmbed, sha256Hex, watchUrl } from '../util';
+import { buildPipelineReport, isPublishedOnDomovina } from '../pipeline';
 
 // Javni programatski API (SaaS klijenti). Auth = per-key Bearer (≠ bridge INGEST_KEY).
 // Enqueue je gejtan na kredite: 1 kredit = 1 obrađeni video. Krediti se zasad pune
@@ -43,6 +44,19 @@ publicApi.post('/jobs', async (c) => {
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
   if (existing) return c.json({ job: existing, deduped: true, credits_remaining: key.credits });
 
+  // Već objavljeno na domovina.ai (CDN artefakt članka postoji) → NE naplaćuj i
+  // ne queueaj ponovnu obradu; javi klijentu da je epizoda već dostupna.
+  const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
+  if (await isPublishedOnDomovina(cdnBase, youtubeId)) {
+    const siteBase = (c.env.SITE_BASE || 'https://domovina.ai').replace(/\/$/, '');
+    return c.json({
+      already_published: true,
+      youtube_id: youtubeId,
+      detail_url: `${siteBase}/v/${youtubeId}`,
+      credits_remaining: key.credits,
+    });
+  }
+
   // Naplata: atomski rezerviraj 1 kredit. Bez kredita → 402 Payment Required.
   if (!(await consumeApiKeyCredit(c.env.DB, key.id))) {
     return c.json({ error: 'Nema dovoljno kredita', credits_remaining: 0 }, 402);
@@ -67,6 +81,17 @@ publicApi.get('/jobs/:id', async (c) => {
   const job = await getJob(c.env.DB, c.req.param('id'));
   if (!job || job.api_key_id !== key.id) return c.json({ error: 'not found' }, 404);
   return c.json({ job });
+});
+
+// Granularni pipeline status vlastitog joba (isti izvještaj kao admin, ali scope-an
+// na ključ). Puni per-korak prikaz u korisničkom /dashboard-u.
+publicApi.get('/jobs/:id/pipeline', async (c) => {
+  const key = c.get('apiKey');
+  const job = await getJob(c.env.DB, c.req.param('id'));
+  if (!job || job.api_key_id !== key.id) return c.json({ error: 'not found' }, 404);
+  const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
+  const report = await buildPipelineReport(cdnBase, job, c.env.SITE_BASE || 'https://domovina.ai');
+  return c.json(report);
 });
 
 // Lista vlastitih jobova.

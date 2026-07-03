@@ -19,8 +19,8 @@ import {
   updateJob,
 } from '../db';
 import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
-import { buildPipelineReport } from '../pipeline';
-import { layout, renderJobsPage, renderKeysPage } from './views';
+import { buildPipelineReport, isPublishedOnDomovina } from '../pipeline';
+import { layout, renderAlreadyPublishedPage, renderJobsPage, renderKeysPage } from './views';
 
 export const admin = new Hono<{ Bindings: Env }>();
 
@@ -44,6 +44,7 @@ admin.post('/jobs', async (c) => {
   const form = await c.req.parseBody();
   const raw = String(form.url ?? '').trim();
   const title = String(form.title ?? '').trim() || null;
+  const force = String(form.force ?? '') === '1'; // "svejedno dodaj" iz potvrdne stranice
   const youtubeId = extractYouTubeId(raw);
   if (!youtubeId) {
     return c.html(
@@ -54,19 +55,37 @@ admin.post('/jobs', async (c) => {
       400,
     );
   }
-  // Dedup: ako već postoji aktivan job za isti video, ne stvaraj duplikat.
+  // Dedup 1: već postoji aktivan job za isti video u NAŠEM queueu.
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
-  if (!existing) {
-    const meta = await fetchOEmbed(youtubeId); // public → naslov+kanal; unlisted → null
-    await createJob(c.env.DB, {
-      youtubeId,
-      youtubeUrl: watchUrl(youtubeId),
-      title: title || meta?.title || null,
-      channel: meta?.channel ?? null,
-      source: 'admin',
-      priceCents: 0,
-    });
+  if (existing) return c.redirect('/admin', 303);
+
+  // Dedup 2: epizoda je već objavljena na domovina.ai (CDN artefakt članka postoji),
+  // iako kod nas nema joba. Čest slučaj: video je prošao glavni pipeline pa se
+  // ad-hoc ponovno doda. Ne queueaj tiho duplikat — pokaži potvrdu s linkom i
+  // "svejedno dodaj" opcijom (force=1) za slučaj namjerne ponovne obrade.
+  if (!force) {
+    const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
+    if (await isPublishedOnDomovina(cdnBase, youtubeId)) {
+      return c.html(
+        renderAlreadyPublishedPage({
+          youtubeId,
+          siteBase: c.env.SITE_BASE || 'https://domovina.ai',
+          rawUrl: raw,
+          title,
+        }),
+      );
+    }
   }
+
+  const meta = await fetchOEmbed(youtubeId); // public → naslov+kanal; unlisted → null
+  await createJob(c.env.DB, {
+    youtubeId,
+    youtubeUrl: watchUrl(youtubeId),
+    title: title || meta?.title || null,
+    channel: meta?.channel ?? null,
+    source: 'admin',
+    priceCents: 0,
+  });
   return c.redirect('/admin', 303);
 });
 
@@ -167,6 +186,6 @@ admin.get('/api/jobs/:id/pipeline', async (c) => {
   const job = await getJob(c.env.DB, c.req.param('id'));
   if (!job) return c.json({ error: 'not found' }, 404);
   const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
-  const report = await buildPipelineReport(cdnBase, job);
+  const report = await buildPipelineReport(cdnBase, job, c.env.SITE_BASE || 'https://domovina.ai');
   return c.json(report);
 });

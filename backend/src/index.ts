@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './types';
 import { admin } from './admin/app';
+import { dashboard } from './dashboard/app';
 import { jobsApi } from './jobs/api';
 import { publicApi } from './jobs/v1';
 import { countByState, sweepStuckFetching } from './db';
@@ -14,13 +15,15 @@ app.get('/', async (c) => {
     service: 'pipeline.domovina.ai',
     purpose: 'ad-hoc/unlisted YouTube → puni DOMOVINA AI pipeline queue',
     admin: '/admin',
+    dashboard: '/dashboard?auth=<API ključ>',
     api: { enqueue: 'POST /api/jobs', claim: 'POST /api/jobs/claim', list: 'GET /api/jobs', status: 'GET /api/jobs/:id' },
-    public_api: { enqueue: 'POST /api/v1/jobs', list: 'GET /api/v1/jobs', status: 'GET /api/v1/jobs/:id', auth: 'Bearer <API ključ>' },
+    public_api: { enqueue: 'POST /api/v1/jobs', list: 'GET /api/v1/jobs', status: 'GET /api/v1/jobs/:id', pipeline: 'GET /api/v1/jobs/:id/pipeline', auth: 'Bearer <API ključ>' },
     counts,
   });
 });
 
 app.route('/admin', admin);
+app.route('/dashboard', dashboard);
 app.route('/api/jobs', jobsApi);
 app.route('/api/v1', publicApi);
 

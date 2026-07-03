@@ -13,6 +13,8 @@
  * nemaju vlastiti job state. Artefakt na CDN-u je jedini pouzdan, idempotentan signal.
  */
 
+import { updateJob } from './db';
+
 export interface PipelineStep {
   key: string;
   label: string;
@@ -120,6 +122,41 @@ async function artifactExists(cdnBase: string, youtubeId: string, artifact: stri
  */
 export async function isPublishedOnDomovina(cdnBase: string, youtubeId: string): Promise<boolean> {
   return artifactExists(cdnBase, youtubeId, 'article.json');
+}
+
+// Ne-terminalna stanja koja mogu "zaostati" za CDN realnošću (bridge nije stigao
+// PATCH-ati, ili je epizoda već bila objavljena prije nego je uopće ušla u queue).
+const IN_PROGRESS_STATES = new Set(['fetching', 'transcribing', 'processing']);
+
+/**
+ * Self-heal: jobovi u ne-terminalnom stanju čiji je članak VEĆ live na CDN-u
+ * prebace se u 'done' + detail_url, da status u admin/dashboard tablici ne laže
+ * (npr. red zaglavljen u FETCHING iako su svi koraci gotovi). Isti signal koji
+ * koristi bridge reconcile.js (article.json), ali ovdje u Workeru — ne ovisi o
+ * cronu Mac Minija. Ograničeno na `cap` jobova po pozivu (bounded subrequesti;
+ * 404 probe su edge-cache-ani pa su jeftini). Mutira `jobs` in-place tako da
+ * ISTI odgovor odmah odražava stvarno stanje. Vrati broj izliječenih.
+ */
+export async function reconcilePublishedJobs(
+  db: D1Database,
+  cdnBase: string,
+  siteBase: string,
+  jobs: Array<{ id: string; youtube_id: string; state: string; detail_url: string | null; deleted_at: number | null }>,
+  cap = 25,
+): Promise<number> {
+  const base = (siteBase || 'https://domovina.ai').replace(/\/$/, '');
+  const candidates = jobs.filter((j) => !j.deleted_at && IN_PROGRESS_STATES.has(j.state)).slice(0, cap);
+  const results = await Promise.all(
+    candidates.map(async (j) => {
+      if (!(await isPublishedOnDomovina(cdnBase, j.youtube_id))) return false;
+      const detailUrl = j.detail_url || `${base}/v/${j.youtube_id}`;
+      await updateJob(db, j.id, { state: 'done', detailUrl });
+      j.state = 'done';
+      j.detail_url = detailUrl;
+      return true;
+    }),
+  );
+  return results.filter(Boolean).length;
 }
 
 /**

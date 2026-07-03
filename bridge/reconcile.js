@@ -2,8 +2,8 @@
 /**
  * reconcile.js — lokalni bridge (Mac Mini), ZAVRŠNI KORAK punog runa.
  *
- * Za jobove u 'transcribing'/'processing' provjeri je li obrada gotova i javi
- * status natrag pipeline.domovina.ai-u:
+ * Za jobove u 'fetching'/'transcribing'/'processing' provjeri je li obrada gotova
+ * i javi status natrag pipeline.domovina.ai-u:
  *   • CDN data/{id}/article.json → 200  ⇒  done + detail_url (live na /v/{id})
  *   • lokalno {id}.canary.diarized.srt postoji, ali članak još ne na CDN-u ⇒ processing
  *   • inače ostaje transcribing (čeka Colab Canary)
@@ -57,7 +57,9 @@ async function articleLive(youtubeId) {
 }
 
 (async () => {
-  const { jobs } = await api('GET', '/api/jobs?state=transcribing,processing&limit=200');
+  // 'fetching' uključen: epizoda može biti već objavljena na CDN-u (npr. već prošla
+  // glavni pipeline) pa se treba odmah zatvoriti u 'done', a ne čekati transcribing.
+  const { jobs } = await api('GET', '/api/jobs?state=fetching,transcribing,processing&limit=200');
   if (!jobs.length) {
     console.log('📭 Nema jobova za reconcile.');
     return;

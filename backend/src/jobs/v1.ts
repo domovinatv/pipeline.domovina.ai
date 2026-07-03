@@ -10,7 +10,7 @@ import {
   touchApiKey,
 } from '../db';
 import { extractYouTubeId, fetchOEmbed, sha256Hex, watchUrl } from '../util';
-import { buildPipelineReport, isPublishedOnDomovina } from '../pipeline';
+import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
 
 // Javni programatski API (SaaS klijenti). Auth = per-key Bearer (≠ bridge INGEST_KEY).
 // Enqueue je gejtan na kredite: 1 kredit = 1 obrađeni video. Krediti se zasad pune
@@ -101,5 +101,12 @@ publicApi.get('/jobs', async (c) => {
     apiKeyId: key.id,
     limit: Number(c.req.query('limit') ?? 50),
   });
+  // Self-heal: ne-terminalni jobovi već live na CDN-u → 'done' (status ne laže).
+  await reconcilePublishedJobs(
+    c.env.DB,
+    c.env.CDN_BASE || 'https://cdn.domovina.ai',
+    c.env.SITE_BASE || 'https://domovina.ai',
+    jobs,
+  );
   return c.json({ jobs, credits_remaining: key.credits });
 });

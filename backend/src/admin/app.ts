@@ -19,7 +19,7 @@ import {
   updateJob,
 } from '../db';
 import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
-import { buildPipelineReport, isPublishedOnDomovina } from '../pipeline';
+import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
 import { layout, renderAlreadyPublishedPage, renderJobsPage, renderKeysPage } from './views';
 
 export const admin = new Hono<{ Bindings: Env }>();
@@ -172,8 +172,16 @@ admin.get('/api/jobs', async (c) => {
   const offset = Number(c.req.query('offset') ?? 0);
   const state = c.req.query('state') || undefined;
   const q = c.req.query('q') || undefined;
-  const [jobs, counts, total] = await Promise.all([
-    listJobs(c.env.DB, { limit, offset, state, q }),
+  const jobs = await listJobs(c.env.DB, { limit, offset, state, q });
+  // Self-heal prije brojanja: ne-terminalni jobovi čiji je članak već live → 'done'
+  // (da status pill ne laže; counts ispod tada odražavaju izliječeno stanje).
+  await reconcilePublishedJobs(
+    c.env.DB,
+    c.env.CDN_BASE || 'https://cdn.domovina.ai',
+    c.env.SITE_BASE || 'https://domovina.ai',
+    jobs,
+  );
+  const [counts, total] = await Promise.all([
     countByState(c.env.DB), // globalni brojevi po stanju (jeftin GROUP BY) — za stats trake/filter
     countJobs(c.env.DB, { state, q }), // total za trenutni filter → pager
   ]);

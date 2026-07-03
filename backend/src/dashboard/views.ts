@@ -41,6 +41,14 @@ ${err}
 // samo jobove ovog ključa i enqueue troši njegove kredite.
 export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
   const body = `
+<style>
+  .imp { display:inline-block; margin-left:.4rem; padding:.05rem .45rem; border-radius:999px;
+         font-size:.68rem; font-weight:700; letter-spacing:.02em; text-transform:uppercase;
+         background:#F3E8FF; color:#7C3AED; vertical-align:middle; }
+  .vlinks { display:flex; flex-direction:column; gap:.15rem; min-width:0; }
+  .vlink { font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40ch; }
+  .vlink.dim { color:var(--muted); }
+</style>
 <h1>Moj pipeline <span class="dim" style="font-size:.9rem;font-weight:600;">— ${escapeHtml(key.name)}</span></h1>
 
 <div class="stats" id="stats">
@@ -146,9 +154,15 @@ async function refresh(){
     var data = await r.json();
     if (typeof data.credits_remaining === 'number') document.getElementById('credits').textContent = data.credits_remaining;
     var rows = (data.jobs||[]).map(function(j){
-      var vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';
+      var ytUrl = 'https://youtu.be/'+esc(j.youtube_id);
+      var domUrl = j.detail_url ? esc(j.detail_url) : '';
+      var links = '<a class="mono vlink" href="'+ytUrl+'" target="_blank" rel="noopener" title="Izvorni YouTube video">'+ytUrl+'</a>'
+                + (domUrl ? '<a class="mono vlink" href="'+domUrl+'" target="_blank" rel="noopener" title="Objavljeno na domovina.ai">'+domUrl+'</a>'
+                          : '<span class="mono vlink dim">domovina.ai — čeka objavu</span>');
+      var vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<div class="vlinks">'+links+'</div></div>';
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
-      var meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
+      var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
+      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
       var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
               : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td></tr>' + detailRow(j);
@@ -194,7 +208,7 @@ document.getElementById('addform').addEventListener('submit', async function(e){
     var r = await fetch('/api/v1/jobs', { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify({ url: url, title: title || undefined }) });
     var d = await r.json().catch(function(){ return {}; });
     if (r.status === 402) { msg.textContent = '⚠ Nema dovoljno kredita (0). Javi se administratoru za dopunu.'; }
-    else if (r.ok && d.already_published) { msg.innerHTML = '✓ Ova epizoda je već objavljena — nije naplaćeno. <a href="'+esc(d.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'; }
+    else if (r.ok && d.already_published) { msg.innerHTML = '✓ Već objavljeno — dodano u tvoju listu (nije naplaćeno). <a href="'+esc(d.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'; document.getElementById('url').value=''; document.getElementById('title').value=''; document.getElementById('ytprev').hidden=true; }
     else if (r.ok && d.deduped) { msg.textContent = '✓ Već je u obradi — nije naplaćeno.'; }
     else if (r.ok && d.job) { msg.textContent = '✓ Poslano na obradu. Preostalo kredita: ' + (d.credits_remaining!=null?d.credits_remaining:'—'); document.getElementById('url').value=''; document.getElementById('title').value=''; document.getElementById('ytprev').hidden=true; }
     else { msg.textContent = '⚠ ' + (d.error || 'Greška pri slanju.'); }

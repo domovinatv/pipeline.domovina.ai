@@ -28,6 +28,63 @@ export async function findActiveJobByYoutubeId(
   return row ?? null;
 }
 
+// Bilo koji ne-obrisan job OVOG ključa za dati video (bilo kojeg stanja, uklj.
+// terminalna). Idempotencija import-grane: ponovni unos već objavljene epizode
+// vrati postojeći red umjesto da stvori duplikat u korisnikovoj listi.
+export async function findJobByYoutubeIdForKey(
+  db: D1Database,
+  youtubeId: string,
+  apiKeyId: string,
+): Promise<JobRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT ${COLS} FROM jobs WHERE youtube_id = ? AND api_key_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(youtubeId, apiKeyId)
+    .first<JobRow>();
+  return row ?? null;
+}
+
+export interface CreateImportedJobInput {
+  youtubeId: string;
+  youtubeUrl: string;
+  title?: string | null;
+  channel?: string | null;
+  apiKeyId: string;
+  detailUrl: string;
+}
+
+// Uveze VEĆ objavljenu epizodu u listu ključa kao gotov (done) job. NE troši kredit
+// i NE queuea obradu — samo referencira postojeću publikaciju (source='import', paid=0),
+// da je korisnik vidi u svom dashboardu s jasnom oznakom da je nastala izvan njegovih
+// kredita (ranije, kroz admin ili neki drugi ključ / redovni pipeline).
+export async function createImportedJob(
+  db: D1Database,
+  input: CreateImportedJobInput,
+): Promise<JobRow> {
+  const id = newId();
+  const ts = nowSec();
+  await db
+    .prepare(
+      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, detail_url, price_cents, paid, attempts, created_at, updated_at, done_at)
+       VALUES (?, ?, ?, ?, ?, 'import', ?, 'done', 'unlisted', ?, 0, 0, 0, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      input.youtubeId,
+      input.youtubeUrl,
+      input.title ?? null,
+      input.channel ?? null,
+      input.apiKeyId,
+      input.detailUrl,
+      ts,
+      ts,
+      ts,
+    )
+    .run();
+  return (await getJob(db, id))!;
+}
+
 export async function createJob(db: D1Database, input: CreateJobInput): Promise<JobRow> {
   const id = newId();
   const ts = nowSec();

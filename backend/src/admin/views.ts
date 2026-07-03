@@ -15,6 +15,11 @@
 import type { ApiKeyRow } from '../types';
 import { escapeHtml } from '../util';
 
+// Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
+// footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
+// build live. Podudaraj s "version" u package.json.
+export const APP_VERSION = 'v0.3.0';
+
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
 <linearGradient id="hdrFlag" x1="0" y1="0" x2="0" y2="1">
@@ -146,6 +151,7 @@ tbody tr:hover { background: var(--surface); }
 /* Izvor unosa: API ključ (naglašen) vs ručni admin unos */
 .pill.src-api { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; text-transform: none; letter-spacing: 0; }
 .pill.src-admin { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.pill.src-import { background: #F3E8FF; color: #7C3AED; border: 1px solid #E9D5FF; text-transform: none; letter-spacing: 0; }
 /* Semantičke boje po stanju (pill klasa = ime stanja) */
 .pill.queued      { background: #E7EEF8; color: #1D4ED8; }   /* plava — čeka */
 .pill.fetching,
@@ -262,7 +268,7 @@ export function layout(title: string, body: string): string {
   <span class="badge">ad-hoc pipeline queue</span>
 </header>
 <main>${body}</main>
-<footer>pipeline.domovina.ai — ručna obrada proizvoljnog (i unlisted) YouTube videa kroz puni AI pipeline</footer>
+<footer>pipeline.domovina.ai — ručna obrada proizvoljnog (i unlisted) YouTube videa kroz puni AI pipeline <span class="dim" style="white-space:nowrap;">· ${APP_VERSION}</span></footer>
 </body></html>`;
 }
 
@@ -455,6 +461,7 @@ function srcBadge(j){
   if (j.source==='api') return '<span class="pill src-api" title="Predano preko API ključa (dashboard/programatski)">🔑 '+esc(j.api_key_name||'API ključ')+'</span>';
   if (j.source==='admin') return '<span class="pill src-admin" title="Ručno dodano iz /admin">admin</span>';
   if (j.source==='bridge') return '<span class="pill neutral" title="Bridge">bridge</span>';
+  if (j.source==='import') return '<span class="pill src-import" title="Već objavljeno — uvezeno u listu ključa (nije naplaćeno)">↧ uvezeno'+(j.api_key_name?' · '+esc(j.api_key_name):'')+'</span>';
   return j.source ? '<span class="pill neutral">'+esc(j.source)+'</span>' : '';
 }
 // Status čelija = pill + očit "koraci" gumb koji otvara per-korak pipeline prikaz ispod retka.

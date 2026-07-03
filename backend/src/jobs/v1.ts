@@ -2,8 +2,10 @@ import { Hono } from 'hono';
 import type { ApiKeyRow, Env } from '../types';
 import {
   consumeApiKeyCredit,
+  createImportedJob,
   createJob,
   findActiveJobByYoutubeId,
+  findJobByYoutubeIdForKey,
   getApiKeyByHash,
   getJob,
   listJobs,
@@ -45,14 +47,32 @@ publicApi.post('/jobs', async (c) => {
   if (existing) return c.json({ job: existing, deduped: true, credits_remaining: key.credits });
 
   // Već objavljeno na domovina.ai (CDN artefakt članka postoji) → NE naplaćuj i
-  // ne queueaj ponovnu obradu; javi klijentu da je epizoda već dostupna.
+  // ne queueaj ponovnu obradu. Umjesto pukog "prolaznog" odgovora, uveze epizodu
+  // kao gotov (done) 'import' red u listu OVOG ključa: korisnik je vidi u svom
+  // dashboardu, s oznakom da je objavljena ranije (izvan njegovih kredita).
   const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
   if (await isPublishedOnDomovina(cdnBase, youtubeId)) {
     const siteBase = (c.env.SITE_BASE || 'https://domovina.ai').replace(/\/$/, '');
+    const detailUrl = `${siteBase}/v/${youtubeId}`;
+    // Idempotentno: ako ovaj ključ već ima red za ovaj video, vrati ga (bez duplikata).
+    let job = await findJobByYoutubeIdForKey(c.env.DB, youtubeId, key.id);
+    if (!job) {
+      const meta = await fetchOEmbed(youtubeId);
+      job = await createImportedJob(c.env.DB, {
+        youtubeId,
+        youtubeUrl: watchUrl(youtubeId),
+        title: body.title || meta?.title || null,
+        channel: meta?.channel ?? null,
+        apiKeyId: key.id,
+        detailUrl,
+      });
+    }
     return c.json({
       already_published: true,
+      imported: true,
+      job,
       youtube_id: youtubeId,
-      detail_url: `${siteBase}/v/${youtubeId}`,
+      detail_url: detailUrl,
       credits_remaining: key.credits,
     });
   }

@@ -88,12 +88,23 @@ function buildFilter(opts: ListOpts): { where: string; binds: unknown[] } {
   return { where: cond.length ? 'WHERE ' + cond.join(' AND ') : '', binds };
 }
 
+// Jobs kolone prefiksirane s `j.` — nužno kad je u igri LEFT JOIN api_keys
+// (obje tablice imaju id/created_at, pa bi bez prefiksa bile dvosmislene).
+const JOB_COLS_J = COLS.split(',')
+  .map((c) => 'j.' + c.trim())
+  .join(', ');
+
 export async function listJobs(db: D1Database, opts: ListOpts = {}): Promise<JobRow[]> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   const offset = Math.max(opts.offset ?? 0, 0);
   const { where, binds } = buildFilter(opts);
+  // LEFT JOIN api_keys → tko je predao job (ime ključa); NULL za admin/bridge unos.
   const res = await db
-    .prepare(`SELECT ${COLS} FROM jobs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    .prepare(
+      `SELECT ${JOB_COLS_J}, ak.name AS api_key_name
+       FROM jobs j LEFT JOIN api_keys ak ON ak.id = j.api_key_id
+       ${where} ORDER BY j.created_at DESC LIMIT ? OFFSET ?`,
+    )
     .bind(...binds, limit, offset)
     .all<JobRow>();
   return res.results ?? [];

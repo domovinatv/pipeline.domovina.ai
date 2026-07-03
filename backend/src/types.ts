@@ -53,6 +53,7 @@ export interface JobRow {
   claimed_at: number | null;
   done_at: number | null;
   deleted_at: number | null; // soft-delete (reverzibilno); NULL = živ job
+  api_key_name?: string | null; // popunjava listJobs (LEFT JOIN api_keys) — tko je predao
 }
 
 export interface ApiKeyRow {

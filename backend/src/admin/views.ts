@@ -143,6 +143,9 @@ tbody tr:hover { background: var(--surface); }
 .pill.bad { background: #F8E2E0; color: var(--danger); }
 .pill.warn { background: #FDF1E0; color: var(--warning); }
 .pill.neutral { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+/* Izvor unosa: API ključ (naglašen) vs ručni admin unos */
+.pill.src-api { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; text-transform: none; letter-spacing: 0; }
+.pill.src-admin { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 /* Semantičke boje po stanju (pill klasa = ime stanja) */
 .pill.queued      { background: #E7EEF8; color: #1D4ED8; }   /* plava — čeka */
 .pill.fetching,
@@ -446,6 +449,14 @@ function actions(j){
   return b.join('');
 }
 
+// Izvor zahtjeva: badge koji pokazuje TKO je predao job — API ključ (ime, iz
+// /dashboard ili programatski) vs ručno iz /admin. Vizualno razlikuje kanale unosa.
+function srcBadge(j){
+  if (j.source==='api') return '<span class="pill src-api" title="Predano preko API ključa (dashboard/programatski)">🔑 '+esc(j.api_key_name||'API ključ')+'</span>';
+  if (j.source==='admin') return '<span class="pill src-admin" title="Ručno dodano iz /admin">admin</span>';
+  if (j.source==='bridge') return '<span class="pill neutral" title="Bridge">bridge</span>';
+  return j.source ? '<span class="pill neutral">'+esc(j.source)+'</span>' : '';
+}
 // Status čelija = pill + očit "koraci" gumb koji otvara per-korak pipeline prikaz ispod retka.
 function statusCell(j){
   var open = expandedId===j.id;
@@ -516,7 +527,7 @@ async function refresh(){
     const rows = (data.jobs||[]).map(j => {
       const vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';
       const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
-      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
+      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       var row = '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';

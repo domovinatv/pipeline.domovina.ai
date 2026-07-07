@@ -104,6 +104,12 @@ function fmt(ts){ if(!ts) return ''; return new Date(ts*1000).toLocaleString('hr
 function thumb(id){ return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
 function dur(s){ if(!s) return ''; s=Math.round(s); var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; var p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
 function pill(s){ return '<span class="pill '+s+'">'+s+'</span>'; }
+// Transkripcijski lock: koji backend (modal/colab) drži transkripciju. Prazno bez claima; nestaje na done/failed.
+function transcribeBadge(j){
+  if (j.transcribe_backend==='modal') return ' <span class="pill tb-modal" title="Transkribira Modal (serverless GPU)'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">⚡ Modal</span>';
+  if (j.transcribe_backend==='colab') return ' <span class="pill tb-colab" title="Transkribira Colab Canary batch'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">🧪 Colab</span>';
+  return '';
+}
 
 function statusCell(j){
   var open = expandedId===j.id;
@@ -162,7 +168,7 @@ async function refresh(){
       var vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<div class="vlinks">'+links+'</div></div>';
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
-      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
+      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+transcribeBadge(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
       var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
               : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td></tr>' + detailRow(j);

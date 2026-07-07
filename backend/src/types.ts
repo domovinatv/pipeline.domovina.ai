@@ -4,6 +4,7 @@ export interface Env {
   ADMIN_USER?: string;
   ADMIN_PASS?: string;
   INGEST_KEY?: string;
+  TRANSCRIBE_KEY?: string; // scoped token samo za /api/transcription/* (npr. Colab); INGEST_KEY također prolazi
   // Vars (wrangler.toml [vars]):
   SITE_BASE?: string; // https://domovina.ai
   CDN_BASE?: string; // https://cdn.domovina.ai — izvor istine za per-korak artefakte
@@ -22,6 +23,10 @@ export const JOB_STATES = [
 ] as const;
 
 export type JobState = (typeof JOB_STATES)[number];
+
+// Transkripcijski backendi koji se natječu za isti WAV (claim/lock u D1).
+export const TRANSCRIBE_BACKENDS = ['colab', 'modal'] as const;
+export type TranscribeBackend = (typeof TRANSCRIBE_BACKENDS)[number];
 
 // Stanja koja lokalni bridge smije postaviti preko PATCH /api/jobs/:id.
 export const BRIDGE_SETTABLE: JobState[] = [
@@ -51,6 +56,8 @@ export interface JobRow {
   created_at: number;
   updated_at: number;
   claimed_at: number | null;
+  transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju
+  transcribe_claimed_at: number | null; // unix sekunde kad je transcribe lock uzet
   done_at: number | null;
   deleted_at: number | null; // soft-delete (reverzibilno); NULL = živ job
   api_key_name?: string | null; // popunjava listJobs (LEFT JOIN api_keys) — tko je predao

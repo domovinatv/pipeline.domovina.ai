@@ -18,7 +18,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.3.0';
+export const APP_VERSION = 'v0.4.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -152,6 +152,9 @@ tbody tr:hover { background: var(--surface); }
 .pill.src-api { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; text-transform: none; letter-spacing: 0; }
 .pill.src-admin { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 .pill.src-import { background: #F3E8FF; color: #7C3AED; border: 1px solid #E9D5FF; text-transform: none; letter-spacing: 0; }
+/* Transkripcijski claim/lock: koji backend drži transkripciju (colab batch vs modal GPU) */
+.pill.tb-modal { background: #E7EEF8; color: #1D4ED8; border: 1px solid #C7D7F0; text-transform: none; letter-spacing: 0; }
+.pill.tb-colab { background: #FDF1E0; color: #B45309; border: 1px solid #F5D9A8; text-transform: none; letter-spacing: 0; }
 /* Semantičke boje po stanju (pill klasa = ime stanja) */
 .pill.queued      { background: #E7EEF8; color: #1D4ED8; }   /* plava — čeka */
 .pill.fetching,
@@ -464,6 +467,13 @@ function srcBadge(j){
   if (j.source==='import') return '<span class="pill src-import" title="Već objavljeno — uvezeno u listu ključa (nije naplaćeno)">↧ uvezeno'+(j.api_key_name?' · '+esc(j.api_key_name):'')+'</span>';
   return j.source ? '<span class="pill neutral">'+esc(j.source)+'</span>' : '';
 }
+// Transkripcijski lock: koji backend (modal/colab) trenutno drži transkripciju ovog videa.
+// Prazno kad nema claima (NULL) — staro ponašanje. Nestaje kad job dođe u done/failed.
+function transcribeBadge(j){
+  if (j.transcribe_backend==='modal') return ' <span class="pill tb-modal" title="Transkribira Modal (serverless GPU)'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">⚡ Modal</span>';
+  if (j.transcribe_backend==='colab') return ' <span class="pill tb-colab" title="Transkribira Colab Canary batch'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">🧪 Colab</span>';
+  return '';
+}
 // Status čelija = pill + očit "koraci" gumb koji otvara per-korak pipeline prikaz ispod retka.
 function statusCell(j){
   var open = expandedId===j.id;
@@ -534,7 +544,7 @@ async function refresh(){
     const rows = (data.jobs||[]).map(j => {
       const vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';
       const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
-      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+'</div>';
+      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+transcribeBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       var row = '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';

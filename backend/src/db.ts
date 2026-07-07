@@ -2,7 +2,7 @@ import type { ApiKeyRow, JobRow, JobState } from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, done_at, deleted_at';
+  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
 
 export interface CreateJobInput {
   youtubeId: string;
@@ -235,6 +235,11 @@ export async function updateJob(
       sets.push('done_at=?');
       binds.push(nowSec());
     }
+    // Terminalno stanje → transcribe lock više nema smisla; očisti ga da GET /claims
+    // ostane čist i da stale-sweep nema što raditi. ('postponed' se može nastaviti → NE diraj.)
+    if (input.state === 'done' || input.state === 'failed' || input.state === 'skipped') {
+      sets.push('transcribe_backend=NULL', 'transcribe_claimed_at=NULL');
+    }
   }
   if (input.detailUrl !== undefined) {
     sets.push('detail_url=?');
@@ -294,6 +299,123 @@ export async function sweepStuckFetching(db: D1Database, olderThanSec: number): 
   const res = await db
     .prepare(`UPDATE jobs SET state='queued', updated_at=? WHERE state='fetching' AND claimed_at < ?`)
     .bind(nowSec(), cutoff)
+    .run();
+  return res.meta.changes ?? 0;
+}
+
+// ───────────────────────── Transkripcijski claim/lock (colab ⇄ modal) ─────────────────────────
+
+export interface ClaimTranscriptionResult {
+  claimed: boolean; // smije li pozivatelj transkribirati ovaj video
+  tracked: boolean; // postoji li job u D1 queueu (false = untracked glavni korpus → uvijek claimed)
+  backend: string; // 'colab' | 'modal' — kod claimed=false ovo je backend koji DRŽI lock
+}
+
+// Atomični compare-and-set claim po youtube_id (transkripcijski backendi znaju samo youtube_id,
+// ne D1 uuid). Bez transakcija u D1 — conditional UPDATE (transcribe_backend IS NULL guard).
+// Untracked video (nije u queueu) → {claimed:true, tracked:false}: gate vrijedi samo za queue-tracked.
+export async function claimTranscription(
+  db: D1Database,
+  youtubeId: string,
+  backend: string,
+): Promise<ClaimTranscriptionResult> {
+  // Aktivni (ne-terminalni, živ) job za ovaj video — kandidat za lock.
+  const job = await db
+    .prepare(
+      `SELECT id, transcribe_backend FROM jobs
+       WHERE youtube_id = ? AND deleted_at IS NULL AND state NOT IN ('done','failed','skipped')
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(youtubeId)
+    .first<{ id: string; transcribe_backend: string | null }>();
+  if (!job) return { claimed: true, tracked: false, backend };
+
+  const ts = nowSec();
+  const upd = await db
+    .prepare(
+      `UPDATE jobs SET transcribe_backend=?, transcribe_claimed_at=?, updated_at=?
+       WHERE id=? AND transcribe_backend IS NULL`,
+    )
+    .bind(backend, ts, ts, job.id)
+    .run();
+  // meta.changes === 1 → mi smo uzeli lock (nitko ga nije držao).
+  if (upd.meta.changes === 1) return { claimed: true, tracked: true, backend };
+
+  // 0 promjena → netko već drži. Pročitaj holdera; isti backend = idempotentan re-claim.
+  const holder = await db
+    .prepare(`SELECT transcribe_backend FROM jobs WHERE id=?`)
+    .bind(job.id)
+    .first<{ transcribe_backend: string | null }>();
+  const heldBy = holder?.transcribe_backend ?? backend;
+  if (heldBy === backend) return { claimed: true, tracked: true, backend };
+  return { claimed: false, tracked: true, backend: heldBy };
+}
+
+// Otpusti transcribe lock za video. `backend` guard (opcionalan) spriječi da netko otpusti tuđi lock.
+export async function releaseTranscription(
+  db: D1Database,
+  youtubeId: string,
+  backend?: string,
+): Promise<number> {
+  const guard = backend ? ' AND transcribe_backend=?' : '';
+  const binds: unknown[] = [nowSec(), youtubeId];
+  if (backend) binds.push(backend);
+  const res = await db
+    .prepare(
+      `UPDATE jobs SET transcribe_backend=NULL, transcribe_claimed_at=NULL, updated_at=?
+       WHERE youtube_id=? AND deleted_at IS NULL AND transcribe_backend IS NOT NULL${guard}`,
+    )
+    .bind(...binds)
+    .run();
+  return res.meta.changes ?? 0;
+}
+
+export interface TranscriptionClaim {
+  youtube_id: string;
+  backend: string;
+  claimed_at: number | null;
+}
+
+// Aktivni claimovi (job u transcribing/processing) — Colab batch ovo povlači da zna što preskočiti.
+export async function listTranscriptionClaims(
+  db: D1Database,
+  backend?: string,
+): Promise<TranscriptionClaim[]> {
+  const guard = backend ? ' AND transcribe_backend=?' : '';
+  const binds: unknown[] = [];
+  if (backend) binds.push(backend);
+  const res = await db
+    .prepare(
+      `SELECT youtube_id, transcribe_backend AS backend, transcribe_claimed_at AS claimed_at
+       FROM jobs
+       WHERE transcribe_backend IS NOT NULL AND deleted_at IS NULL
+         AND state IN ('transcribing','processing')${guard}
+       ORDER BY transcribe_claimed_at DESC`,
+    )
+    .bind(...binds)
+    .all<TranscriptionClaim>();
+  return res.results ?? [];
+}
+
+// Sweep: transcribe lock predugo u 'transcribing' (srušen run) → oslobodi (backend=NULL) da
+// drugi backend može preuzeti. Cutoff je PO BACKENDU jer im se legitimni lifetime bitno razlikuje:
+//   - modal → sekunde/minute; >2h = stvarno zaglavljen.
+//   - colab → batch piše SRT na Drive, tek idući nightly rclone-pull + diarize gura job u
+//     'processing' → lock legitimno traje i po nekoliko sati; prerani otpust bi ponovno otvorio
+//     prozor za duplu transkripciju (baš safety-net radi kojeg feature postoji). Zato ~48h.
+// (Kad job legitimno napreduje u processing/done/skipped, updateJob ionako očisti lock.)
+export async function sweepStuckTranscribing(
+  db: D1Database,
+  backend: string,
+  olderThanSec: number,
+): Promise<number> {
+  const cutoff = nowSec() - olderThanSec;
+  const res = await db
+    .prepare(
+      `UPDATE jobs SET transcribe_backend=NULL, transcribe_claimed_at=NULL, updated_at=?
+       WHERE transcribe_backend=? AND state='transcribing' AND transcribe_claimed_at < ?`,
+    )
+    .bind(nowSec(), backend, cutoff)
     .run();
   return res.meta.changes ?? 0;
 }

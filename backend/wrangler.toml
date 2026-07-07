@@ -38,6 +38,8 @@ CDN_BASE = "https://cdn.domovina.ai"
 PRICE_CENTS = "100"
 
 # Secrets — postavi s `wrangler secret put`:
-#   ADMIN_USER   # Basic Auth user za /admin dashboard
-#   ADMIN_PASS   # Basic Auth pass za /admin dashboard
-#   INGEST_KEY   # Bearer token za /api/jobs/* (lokalni bridge na Mac Miniju + budući API)
+#   ADMIN_USER     # Basic Auth user za /admin dashboard
+#   ADMIN_PASS     # Basic Auth pass za /admin dashboard
+#   INGEST_KEY     # Bearer token za /api/jobs/* (lokalni bridge na Mac Miniju + budući API)
+#   TRANSCRIBE_KEY # Scoped Bearer token SAMO za /api/transcription/* (npr. Colab userdata).
+#                  # INGEST_KEY također prolazi na tim rutama; ovaj token NE otključava /api/jobs/*.

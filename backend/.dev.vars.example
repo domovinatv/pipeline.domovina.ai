@@ -3,3 +3,5 @@
 ADMIN_USER="admin"
 ADMIN_PASS="promijeni-me"
 INGEST_KEY="dugacki-random-token-za-bridge"
+# Scoped token za /api/transcription/* (Colab claim/skip). INGEST_KEY također prolazi tamo.
+TRANSCRIBE_KEY="dugacki-random-token-za-colab"

@@ -68,6 +68,13 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
       <label for="title">Naslov (opcijski)</label>
       <input id="title" name="title" placeholder="npr. Intervju — gost">
     </div>
+    <div class="field">
+      <label>Način obrade</label>
+      <div class="tierpick">
+        <label class="tieropt"><input type="radio" name="tier" value="standard" checked> <b>Standardno</b> <span class="dim">— 1 kredit, noćni batch (do ~1–2 dana)</span></label>
+        <label class="tieropt"><input type="radio" name="tier" value="priority"> <b>⚡ Prioritet</b> <span class="dim">— 3 kredita, obrada odmah (~15 min)</span></label>
+      </div>
+    </div>
     <button type="submit"><span class="plus">+</span> Pošalji na obradu</button>
   </form>
   <div class="ytprev" id="ytprev" hidden>
@@ -77,7 +84,7 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
       <div class="ytprev-sub"><span id="ytprev-chan" class="dim"></span></div>
     </div>
   </div>
-  <div class="hint" id="addmsg">Public ili unlisted — svejedno. 1 obrada = 1 kredit. Gotov video je dostupan na <span class="mono">domovina.ai/v/{id}</span>.</div>
+  <div class="hint" id="addmsg">Public ili unlisted — svejedno. Standard 1 kredit, prioritet 3. Gotov video je dostupan na <span class="mono">domovina.ai/v/{id}</span>.</div>
 </div>
 
 <div class="controls">
@@ -109,6 +116,24 @@ function transcribeBadge(j){
   if (j.transcribe_backend==='modal') return ' <span class="pill tb-modal" title="Transkribira Modal (serverless GPU)'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">⚡ Modal</span>';
   if (j.transcribe_backend==='colab') return ' <span class="pill tb-colab" title="Transkribira Colab Canary batch'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">🧪 Colab</span>';
   return '';
+}
+// Prioritet tier: ⚡ badge na prioritetnim jobovima (Modal instant put).
+function priorityBadge(j){
+  return j.priority ? ' <span class="pill prio" title="Prioritetna obrada (Modal, odmah)">⚡ Prioritet</span>' : '';
+}
+// "Forsiraj sada": digni queued standard job na prioritet (naplati razliku 2 kredita).
+async function prioritize(id){
+  var msg = document.getElementById('addmsg');
+  msg.textContent = 'Dižem na prioritet…';
+  try {
+    var r = await fetch('/api/v1/jobs/'+id+'/prioritize', { method:'POST', headers: H });
+    var d = await r.json().catch(function(){ return {}; });
+    if (r.status === 402) { msg.textContent = '⚠ Nema dovoljno kredita za prioritet (treba ' + (d.required||2) + ').'; }
+    else if (r.status === 409) { msg.textContent = '⚠ ' + (d.error || 'Job je već krenuo.'); }
+    else if (r.ok) { msg.textContent = '⚡ Prebačeno na prioritet. Preostalo kredita: ' + (d.credits_remaining!=null?d.credits_remaining:'—'); }
+    else { msg.textContent = '⚠ ' + (d.error || 'Greška.'); }
+  } catch(e){ msg.textContent = '⚠ Mrežna greška.'; }
+  refresh();
 }
 
 function statusCell(j){
@@ -168,9 +193,13 @@ async function refresh(){
       var vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<div class="vlinks">'+links+'</div></div>';
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
-      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+transcribeBadge(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
-      var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
-              : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
+      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+priorityBadge(j)+transcribeBadge(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
+      // Rezultat: link kad gotovo; inače za queued standard job nudi "⚡ Forsiraj sada".
+      var res;
+      if (j.detail_url) res = '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>';
+      else if (j.state==='queued' && !j.priority) res = '<button class="pillbtn prio-btn" data-prio="'+esc(j.id)+'" title="Obradi odmah preko Modala — naplati razliku (2 kredita)">⚡ Forsiraj sada</button>';
+      else if (j.state==='failed' && j.error) res = '<span class="dim">'+esc(j.error).slice(0,80)+'</span>';
+      else res = '<span class="dim">—</span>';
       return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td></tr>' + detailRow(j);
     }).join('');
     document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5" class="empty">Još nema obrada. Pošalji prvu gore.</td></tr>';
@@ -209,11 +238,12 @@ document.getElementById('addform').addEventListener('submit', async function(e){
   var url = document.getElementById('url').value.trim();
   var title = document.getElementById('title').value.trim();
   if (!url) return;
+  var tier = (document.querySelector('input[name=tier]:checked')||{}).value || 'standard';
   msg.textContent = 'Šaljem…';
   try {
-    var r = await fetch('/api/v1/jobs', { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify({ url: url, title: title || undefined }) });
+    var r = await fetch('/api/v1/jobs', { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify({ url: url, title: title || undefined, tier: tier }) });
     var d = await r.json().catch(function(){ return {}; });
-    if (r.status === 402) { msg.textContent = '⚠ Nema dovoljno kredita (0). Javi se administratoru za dopunu.'; }
+    if (r.status === 402) { msg.textContent = '⚠ Nema dovoljno kredita (treba ' + (d.required||1) + ', imaš ' + (d.credits_remaining!=null?d.credits_remaining:0) + '). Javi se administratoru za dopunu.'; }
     else if (r.ok && d.already_published) { msg.innerHTML = '✓ Već objavljeno — dodano u tvoju listu (nije naplaćeno). <a href="'+esc(d.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'; document.getElementById('url').value=''; document.getElementById('title').value=''; document.getElementById('ytprev').hidden=true; }
     else if (r.ok && d.deduped) { msg.textContent = '✓ Već je u obradi — nije naplaćeno.'; }
     else if (r.ok && d.job) { msg.textContent = '✓ Poslano na obradu. Preostalo kredita: ' + (d.credits_remaining!=null?d.credits_remaining:'—'); document.getElementById('url').value=''; document.getElementById('title').value=''; document.getElementById('ytprev').hidden=true; }
@@ -223,6 +253,8 @@ document.getElementById('addform').addEventListener('submit', async function(e){
 });
 
 document.getElementById('rows').addEventListener('click', function(e){
+  var pb = e.target.closest('button.prio-btn');
+  if (pb) { prioritize(pb.dataset.prio); return; }
   var tog = e.target.closest('button.pillbtn');
   if (tog) toggleSteps(tog.dataset.jobid);
 });

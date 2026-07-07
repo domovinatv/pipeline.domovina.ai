@@ -13,6 +13,7 @@ import {
   getJob,
   listApiKeys,
   listJobs,
+  prioritizeJob,
   restoreJob,
   setApiKeyEnabled,
   softDeleteJob,
@@ -45,6 +46,7 @@ admin.post('/jobs', async (c) => {
   const raw = String(form.url ?? '').trim();
   const title = String(form.title ?? '').trim() || null;
   const force = String(form.force ?? '') === '1'; // "svejedno dodaj" iz potvrdne stranice
+  const priority = String(form.priority ?? '') === '1' ? 1 : 0; // admin prioritet (besplatno)
   const youtubeId = extractYouTubeId(raw);
   if (!youtubeId) {
     return c.html(
@@ -85,6 +87,8 @@ admin.post('/jobs', async (c) => {
     channel: meta?.channel ?? null,
     source: 'admin',
     priceCents: 0,
+    priority,
+    creditCost: priority ? 3 : 1,
   });
   return c.redirect('/admin', 303);
 });
@@ -117,6 +121,10 @@ admin.post('/jobs/:id/:action', async (c) => {
       break;
     case 'requeue':
       await updateJob(c.env.DB, id, { state: 'queued', error: null });
+      break;
+    case 'prioritize':
+      // Admin digne queued job na prioritet (besplatno; naplata je samo na dashboard putu).
+      await prioritizeJob(c.env.DB, id, null, 3);
       break;
     default:
       return c.json({ error: `nepoznata akcija: ${action}` }, 400);

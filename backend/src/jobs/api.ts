@@ -56,9 +56,11 @@ jobsApi.get('/', async (c) => {
 });
 
 // Bridge claim: pokupi do `max` queued → 'fetching', vrati ih.
+// priority:true (ili ?priority=1) → SAMO prioritetni jobovi (Modal fast-path poller na Macu).
 jobsApi.post('/claim', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { max?: number };
-  const jobs = await claimJobs(c.env.DB, body.max ?? 5);
+  const body = (await c.req.json().catch(() => ({}))) as { max?: number; priority?: boolean };
+  const priorityOnly = body.priority === true || c.req.query('priority') === '1';
+  const jobs = await claimJobs(c.env.DB, body.max ?? 5, { priorityOnly });
   return c.json({ jobs });
 });
 

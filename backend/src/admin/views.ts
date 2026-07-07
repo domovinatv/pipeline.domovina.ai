@@ -18,7 +18,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.4.0';
+export const APP_VERSION = 'v0.5.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -155,6 +155,12 @@ tbody tr:hover { background: var(--surface); }
 /* Transkripcijski claim/lock: koji backend drži transkripciju (colab batch vs modal GPU) */
 .pill.tb-modal { background: #E7EEF8; color: #1D4ED8; border: 1px solid #C7D7F0; text-transform: none; letter-spacing: 0; }
 .pill.tb-colab { background: #FDF1E0; color: #B45309; border: 1px solid #F5D9A8; text-transform: none; letter-spacing: 0; }
+/* Priority tier: prioritetni (Modal instant) job */
+.pill.prio { background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; text-transform: none; letter-spacing: 0; }
+/* Tier izbor u enqueue formi + "Forsiraj sada" gumb */
+.tierpick { display: flex; flex-direction: column; gap: .3rem; }
+.tieropt { font-weight: 400; display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+.prio-btn { border-color: #FDE68A; color: #92400E; }
 /* Semantičke boje po stanju (pill klasa = ime stanja) */
 .pill.queued      { background: #E7EEF8; color: #1D4ED8; }   /* plava — čeka */
 .pill.fetching,
@@ -341,6 +347,9 @@ ${navTabs('queue')}
       <label for="title">Naslov (opcijski)</label>
       <input id="title" name="title" placeholder="npr. Intervju — gost">
     </div>
+    <div class="field">
+      <label class="tieropt"><input type="checkbox" name="priority" value="1"> ⚡ Prioritet (Modal instant fast-path)</label>
+    </div>
     <button type="submit"><span class="plus">+</span> Dodaj u queue</button>
   </form>
   <div class="ytprev" id="ytprev" hidden>
@@ -452,7 +461,7 @@ function actions(j){
     b.push(btn(j.id,'purge','🗑 Trajno'));
     return b.join('');
   }
-  if (j.state==='queued') { b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
+  if (j.state==='queued') { if (!j.priority) b.push(btn(j.id,'prioritize','⚡ Prioritet')); b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
   b.push(btn(j.id,'delete','✕'));
   return b.join('');
@@ -466,6 +475,10 @@ function srcBadge(j){
   if (j.source==='bridge') return '<span class="pill neutral" title="Bridge">bridge</span>';
   if (j.source==='import') return '<span class="pill src-import" title="Već objavljeno — uvezeno u listu ključa (nije naplaćeno)">↧ uvezeno'+(j.api_key_name?' · '+esc(j.api_key_name):'')+'</span>';
   return j.source ? '<span class="pill neutral">'+esc(j.source)+'</span>' : '';
+}
+// Prioritet tier: ⚡ badge na prioritetnim jobovima (Modal instant put).
+function priorityBadge(j){
+  return j.priority ? ' <span class="pill prio" title="Prioritetna obrada (Modal, odmah)">⚡ Prioritet</span>' : '';
 }
 // Transkripcijski lock: koji backend (modal/colab) trenutno drži transkripciju ovog videa.
 // Prazno kad nema claima (NULL) — staro ponašanje. Nestaje kad job dođe u done/failed.
@@ -544,7 +557,7 @@ async function refresh(){
     const rows = (data.jobs||[]).map(j => {
       const vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';
       const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
-      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+transcribeBadge(j)+'</div>';
+      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       var row = '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';

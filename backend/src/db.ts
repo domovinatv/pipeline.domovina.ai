@@ -2,7 +2,7 @@ import type { ApiKeyRow, JobRow, JobState } from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
+  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
 
 export interface CreateJobInput {
   youtubeId: string;
@@ -12,6 +12,8 @@ export interface CreateJobInput {
   source?: string;
   apiKeyId?: string | null;
   priceCents?: number;
+  priority?: number; // 0 standard | 1 prioritet
+  creditCost?: number; // rezervirani krediti (1 standard, 3 prioritet)
 }
 
 // Vrati postojeći ne-terminalni job za isti video (idempotencija/dedup), ako postoji.
@@ -90,8 +92,8 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
   const ts = nowSec();
   await db
     .prepare(
-      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, 0, ?, ?)`,
+      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, 0, ?, ?)`,
     )
     .bind(
       id,
@@ -102,6 +104,8 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.source ?? 'admin',
       input.apiKeyId ?? null,
       input.priceCents ?? 0,
+      input.priority ?? 0,
+      input.creditCost ?? 1,
       ts,
       ts,
     )
@@ -189,10 +193,19 @@ export async function countByState(db: D1Database): Promise<Record<string, numbe
 
 // Atomski claim: pokupi do `max` queued jobova i prebaci ih u 'fetching'.
 // Bez transakcija u D1 — koristimo conditional UPDATE po id-u (state='queued' guard).
-export async function claimJobs(db: D1Database, max: number): Promise<JobRow[]> {
+// opts.priorityOnly: uzmi SAMO prioritetne (Modal fast-path poller). Bez toga: svi,
+// ali priority-first (noćni bulk tako fallback drenira prioritetne prve ako je poller pao).
+export async function claimJobs(
+  db: D1Database,
+  max: number,
+  opts: { priorityOnly?: boolean } = {},
+): Promise<JobRow[]> {
   const n = Math.min(Math.max(max, 1), 25);
+  const prioCond = opts.priorityOnly ? ' AND priority > 0' : '';
   const candidates = await db
-    .prepare(`SELECT ${COLS} FROM jobs WHERE state = 'queued' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT ?`)
+    .prepare(
+      `SELECT ${COLS} FROM jobs WHERE state = 'queued' AND deleted_at IS NULL${prioCond} ORDER BY priority DESC, created_at ASC LIMIT ?`,
+    )
     .bind(n)
     .all<JobRow>();
   const claimed: JobRow[] = [];
@@ -488,11 +501,39 @@ export async function deleteApiKey(db: D1Database, id: string): Promise<boolean>
   return (res.meta.changes ?? 0) > 0;
 }
 
-// Atomski "rezerviraj" 1 kredit (credits>0 guard, bez D1 transakcija). true = skinut.
-export async function consumeApiKeyCredit(db: D1Database, id: string): Promise<boolean> {
+// Atomski "rezerviraj" N kredita (credits>=n guard, bez D1 transakcija). true = skinuto.
+// `credits>=?` je nosivi dio: ako ključ ima 2 a tražiš 3 → 0 promjena, bez overdrawa.
+export async function consumeApiKeyCredits(db: D1Database, id: string, n: number): Promise<boolean> {
+  const cost = Math.max(1, Math.floor(n) || 1);
   const res = await db
-    .prepare(`UPDATE api_keys SET credits = credits - 1 WHERE id = ? AND credits > 0`)
-    .bind(id)
+    .prepare(`UPDATE api_keys SET credits = credits - ? WHERE id = ? AND credits >= ?`)
+    .bind(cost, id, cost)
+    .run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+// Rezerviraj točno 1 kredit (tanki wrapper radi backward-compat poziva).
+export async function consumeApiKeyCredit(db: D1Database, id: string): Promise<boolean> {
+  return consumeApiKeyCredits(db, id, 1);
+}
+
+// "Forsiraj sada": digni queued standard job na prioritet (priority=1, credit_cost=3).
+// Guard state='queued' AND priority=0 → ne dira ono što je već krenulo ni već-prioritetno.
+// apiKeyId (opcijski) ograniči na vlasnika ključa (dashboard); admin ga izostavi.
+export async function prioritizeJob(
+  db: D1Database,
+  id: string,
+  apiKeyId: string | null,
+  creditCost: number,
+): Promise<boolean> {
+  const ownerGuard = apiKeyId ? ' AND api_key_id = ?' : '';
+  const binds: unknown[] = [creditCost, nowSec(), id];
+  if (apiKeyId) binds.push(apiKeyId);
+  const res = await db
+    .prepare(
+      `UPDATE jobs SET priority=1, credit_cost=?, updated_at=? WHERE id=? AND state='queued' AND priority=0 AND deleted_at IS NULL${ownerGuard}`,
+    )
+    .bind(...binds)
     .run();
   return (res.meta.changes ?? 0) === 1;
 }

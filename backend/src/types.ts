@@ -56,6 +56,8 @@ export interface JobRow {
   created_at: number;
   updated_at: number;
   claimed_at: number | null;
+  priority: number; // 0 = standard (noćni Colab bulk), 1 = prioritet (Modal instant fast-path)
+  credit_cost: number; // koliko kredita je rezervirano za ovaj job (1 standard, 3 prioritet)
   transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju
   transcribe_claimed_at: number | null; // unix sekunde kad je transcribe lock uzet
   done_at: number | null;

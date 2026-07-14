@@ -24,6 +24,7 @@
  *   FETCH_REPO                 (default sibling ../fetch.domovina.tv)
  *   CDN_BASE                   (default https://cdn.domovina.ai)
  *   CLAUDE_BIN                 (default 'claude' — Claude Code CLI, mora imati Magisterium MCP)
+ *   CLAUDE_PERMISSION_MODE     (default 'bypassPermissions' — headless runbook radi bash/MCP/R2 bez interakcije)
  *   MAG_MAX                    (default 2 — koliko zahtjeva po ticku; chat je rate-limitiran 15/min)
  *   MAG_RUNNER                 ('claude' default | 'manual' = samo ispiši komande, ne pokreći/claimaj)
  *   MAG_RUN_TIMEOUT_MS         (default 3_600_000 = 60 min po videu; run traje ~14 min prosjek)
@@ -36,6 +37,7 @@ const INGEST_KEY = process.env.PIPELINE_QUEUE_INGEST_KEY;
 const FETCH_REPO = process.env.FETCH_REPO || path.resolve(__dirname, '..', '..', 'fetch.domovina.tv');
 const CDN_BASE = (process.env.CDN_BASE || 'https://cdn.domovina.ai').replace(/\/$/, '');
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE || 'bypassPermissions';
 const MAG_MAX = parseInt(process.env.MAG_MAX || '2', 10);
 const MAG_RUNNER = process.env.MAG_RUNNER || 'claude';
 const RUN_TIMEOUT_MS = parseInt(process.env.MAG_RUN_TIMEOUT_MS || '3600000', 10);
@@ -79,7 +81,9 @@ async function artifactExists(youtubeId, lang) {
 function runRunbook(youtubeId, lang) {
   const suffix = lang === 'en' ? ' +EN' : '';
   const prompt = `@docs/MAGISTERIUM_MCP_RUN.md ${youtubeId}${suffix}`;
-  const r = spawnSync(CLAUDE_BIN, ['-p', prompt], {
+  const args = ['-p', prompt];
+  if (CLAUDE_PERMISSION_MODE) args.push('--permission-mode', CLAUDE_PERMISSION_MODE);
+  const r = spawnSync(CLAUDE_BIN, args, {
     cwd: FETCH_REPO,
     stdio: 'inherit',
     timeout: RUN_TIMEOUT_MS,

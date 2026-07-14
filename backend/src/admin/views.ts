@@ -18,7 +18,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.5.0';
+export const APP_VERSION = 'v0.6.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -157,6 +157,12 @@ tbody tr:hover { background: var(--surface); }
 .pill.tb-colab { background: #FDF1E0; color: #B45309; border: 1px solid #F5D9A8; text-transform: none; letter-spacing: 0; }
 /* Priority tier: prioritetni (Modal instant) job */
 .pill.prio { background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; text-transform: none; letter-spacing: 0; }
+/* Magisterium (re)obrada stanje po jeziku (badge u meta čeliji) */
+.pill.mag { text-transform: none; letter-spacing: 0; }
+.pill.mag-wait   { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; }   /* queued — čeka pollera */
+.pill.mag-run    { background: #FDF1E0; color: #B45309; border: 1px solid #F5D9A8; }   /* running — poller obrađuje */
+.pill.mag-done   { background: #E0F1E5; color: #2E8540; border: 1px solid #BFE3CC; }   /* done */
+.pill.mag-failed { background: #F8E2E0; color: #B42318; border: 1px solid #F3C9C5; }   /* failed */
 /* Tier izbor u enqueue formi + "Forsiraj sada" gumb */
 .tierpick { display: flex; flex-direction: column; gap: .3rem; }
 .tieropt { font-weight: 400; display: flex; align-items: center; gap: .4rem; cursor: pointer; }
@@ -213,6 +219,12 @@ button.act.a-restore  { color: #1D4ED8; border-color: #CDDDF6; }
 button.act.a-restore:hover  { background: #E7EEF8; }
 button.act.a-purge    { color: #B42318; border-color: #F3C9C5; }
 button.act.a-purge:hover    { background: #F8E2E0; }
+/* Magisterium akcije: toggle namjere (uklj/isklj) + one-click (re)obrada HR/EN */
+button.act.a-mag-off, button.act.a-mag-on,
+button.act.a-magisterium-hr, button.act.a-magisterium-en { color: #4338CA; border-color: #DDD6FE; }
+button.act.a-mag-off:hover, button.act.a-mag-on:hover,
+button.act.a-magisterium-hr:hover, button.act.a-magisterium-en:hover { background: #EEF2FF; }
+button.act.a-mag-on { color: var(--muted); border-color: var(--border); }
 button.act:active { transform: translateY(1px); }
 button.act.busy { opacity: .45; pointer-events: none; }
 /* Soft-deleted redak: prekrižen + zatamnjen (akcijski gumbi ostaju čitljivi) */
@@ -290,6 +302,7 @@ export function renderAlreadyPublishedPage(opts: {
   siteBase: string;
   rawUrl: string;
   title: string | null;
+  withMagisterium?: boolean;
 }): string {
   const base = opts.siteBase.replace(/\/$/, '');
   const liveUrl = `${base}/v/${opts.youtubeId}`;
@@ -311,6 +324,8 @@ obrađivati (troši resurse i ne mijenja rezultat).</p>
     <input type="hidden" name="url" value="${escapeHtml(opts.rawUrl)}">
     <input type="hidden" name="title" value="${escapeHtml(opts.title || '')}">
     <input type="hidden" name="force" value="1">
+    <input type="hidden" name="mag_present" value="1">
+    ${opts.withMagisterium === false ? '' : '<input type="hidden" name="with_magisterium" value="1">'}
     <button class="act a-requeue" type="submit">Svejedno dodaj u queue (ponovna obrada)</button>
   </form>
 </p>`;
@@ -349,6 +364,10 @@ ${navTabs('queue')}
     </div>
     <div class="field">
       <label class="tieropt"><input type="checkbox" name="priority" value="1"> ⚡ Prioritet (Modal instant fast-path)</label>
+    </div>
+    <div class="field">
+      <input type="hidden" name="mag_present" value="1">
+      <label class="tieropt"><input type="checkbox" name="with_magisterium" value="1" checked> 🕊 Magisterium AI (teološko obogaćivanje — KORAK 8.5)</label>
     </div>
     <button type="submit"><span class="plus">+</span> Dodaj u queue</button>
   </form>
@@ -453,7 +472,25 @@ function fmt(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocal
 function thumb(id){ return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
 function dur(s){ if(!s) return ''; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; const p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
 // Akcijski gumb: klasa a-{action} → boja akcije == boja stanja koje proizvodi (vizualna veza).
-function btn(id,action,label){ return '<button class="act a-'+action+'" data-id="'+esc(id)+'" data-act="'+action+'">'+label+'</button>'; }
+function btn(id,action,label,title){ return '<button class="act a-'+action+'" data-id="'+esc(id)+'" data-act="'+action+'"'+(title?' title="'+esc(title)+'"':'')+'>'+label+'</button>'; }
+// Magisterium (re)obrada gumbi po jobu:
+//  - ne-done  → toggle NAMJERE (utječe na status "čeka" vs "preskočeno" + cron auto-enqueue)
+//  - done     → one-click POKRETANJE (re)obrade HR/EN (bridge poller pokupi zahtjev); dok je
+//               zahtjev queued/running gumb se sakrije (badge u meta čeliji pokazuje stanje).
+function magActions(j){
+  var b = [];
+  if (j.state==='done') {
+    var hrBusy = j.mag_hr_state==='queued' || j.mag_hr_state==='running';
+    var enBusy = j.mag_en_state==='queued' || j.mag_en_state==='running';
+    if (!hrBusy) b.push(btn(j.id,'magisterium-hr','🕊 Mag HR', j.mag_hr_state==='done'?'Ponovno obradi Magisterium HR':'Pokreni Magisterium HR obradu'));
+    if (!enBusy) b.push(btn(j.id,'magisterium-en','🕊 Mag EN', j.mag_en_state==='done'?'Ponovno obradi Magisterium EN overlay':'Pokreni Magisterium EN overlay'));
+  } else {
+    b.push(j.with_magisterium
+      ? btn(j.id,'mag-off','🕊 Mag ✓','Magisterium UKLJUČEN za ovaj video — klik za isključi')
+      : btn(j.id,'mag-on','🕊 Mag ✗','Magisterium ISKLJUČEN za ovaj video — klik za uključi'));
+  }
+  return b;
+}
 function actions(j){
   var b = [];
   if (j.deleted_at) {   // soft-deleted: samo vrati ili trajno obriši
@@ -461,8 +498,9 @@ function actions(j){
     b.push(btn(j.id,'purge','🗑 Trajno'));
     return b.join('');
   }
-  if (j.state==='queued') { if (!j.priority) b.push(btn(j.id,'prioritize','⚡ Prioritet')); b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
+  if (j.state==='queued') { if (!j.priority) b.push(btn(j.id,'prioritize','⚡ Prioritet','Sponzoriraj instant obradu (Modal) — besplatno, radi i za API jobove')); b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
+  b = b.concat(magActions(j));
   b.push(btn(j.id,'delete','✕'));
   return b.join('');
 }
@@ -486,6 +524,18 @@ function transcribeBadge(j){
   if (j.transcribe_backend==='modal') return ' <span class="pill tb-modal" title="Transkribira Modal (serverless GPU)'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">⚡ Modal</span>';
   if (j.transcribe_backend==='colab') return ' <span class="pill tb-colab" title="Transkribira Colab Canary batch'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">🧪 Colab</span>';
   return '';
+}
+// Magisterium (re)obrada stanje po jeziku — badge u meta čeliji (kad postoji zahtjev u queueu).
+// wait=queued (čeka pollera), run=running (poller obrađuje), done=gotovo, failed=greška.
+function magStateBadge(j){
+  function one(lang, st){
+    if (!st) return '';
+    var lbl = lang.toUpperCase();
+    var cls = st==='done'?'done':(st==='failed'?'failed':(st==='running'?'run':'wait'));
+    var glyph = st==='done'?'✓':(st==='failed'?'⚠':(st==='running'?'⏳':'⧗'));
+    return ' <span class="pill mag mag-'+cls+'" title="Magisterium '+lbl+': '+esc(st)+'">🕊 '+lbl+' '+glyph+'</span>';
+  }
+  return one('hr', j.mag_hr_state)+one('en', j.mag_en_state);
 }
 // Status čelija = pill + očit "koraci" gumb koji otvara per-korak pipeline prikaz ispod retka.
 function statusCell(j){
@@ -557,7 +607,7 @@ async function refresh(){
     const rows = (data.jobs||[]).map(j => {
       const vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';
       const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
-      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+'</div>';
+      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       var row = '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';

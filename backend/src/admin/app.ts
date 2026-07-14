@@ -9,6 +9,7 @@ import {
   createJob,
   deleteApiKey,
   deleteJob,
+  enqueueMagisteriumJob,
   findActiveJobByYoutubeId,
   getJob,
   listApiKeys,
@@ -16,6 +17,7 @@ import {
   prioritizeJob,
   restoreJob,
   setApiKeyEnabled,
+  setJobMagisterium,
   softDeleteJob,
   updateJob,
 } from '../db';
@@ -47,6 +49,9 @@ admin.post('/jobs', async (c) => {
   const title = String(form.title ?? '').trim() || null;
   const force = String(form.force ?? '') === '1'; // "svejedno dodaj" iz potvrdne stranice
   const priority = String(form.priority ?? '') === '1' ? 1 : 0; // admin prioritet (besplatno)
+  // Magisterium checkbox: `mag_present` hidden polje označava da forma nosi checkbox (unchecked
+  // checkbox ne šalje ništa). Bez tog polja (stari/programatski POST) → default UKLJUČENO.
+  const withMagisterium = String(form.mag_present ?? '') === '1' ? String(form.with_magisterium ?? '') === '1' : true;
   const youtubeId = extractYouTubeId(raw);
   if (!youtubeId) {
     return c.html(
@@ -74,6 +79,7 @@ admin.post('/jobs', async (c) => {
           siteBase: c.env.SITE_BASE || 'https://domovina.ai',
           rawUrl: raw,
           title,
+          withMagisterium,
         }),
       );
     }
@@ -89,6 +95,7 @@ admin.post('/jobs', async (c) => {
     priceCents: 0,
     priority,
     creditCost: priority ? 3 : 1,
+    withMagisterium,
   });
   return c.redirect('/admin', 303);
 });
@@ -100,6 +107,8 @@ admin.post('/jobs', async (c) => {
 //   skip     — state=skipped (nikad se ne claima)
 //   postpone — state=postponed (drži izvan queuea)
 //   requeue  — vrati u queued (iz skipped/postponed/failed), očisti grešku
+//   mag-on/mag-off       — uključi/isključi Magisterium namjeru za ovaj video
+//   magisterium-hr/-en   — one-click: ubaci zahtjev za Magisterium (re)obradu (bridge poller ga pokrene)
 admin.post('/jobs/:id/:action', async (c) => {
   const id = c.req.param('id');
   const action = c.req.param('action');
@@ -124,8 +133,27 @@ admin.post('/jobs/:id/:action', async (c) => {
       break;
     case 'prioritize':
       // Admin digne queued job na prioritet (besplatno; naplata je samo na dashboard putu).
+      // Radi i za jobove predane preko API ključa — admin "sponzorira" instant obradu.
       await prioritizeJob(c.env.DB, id, null, 3);
       break;
+    case 'mag-on':
+      await setJobMagisterium(c.env.DB, id, true);
+      break;
+    case 'mag-off':
+      await setJobMagisterium(c.env.DB, id, false);
+      break;
+    case 'magisterium-hr':
+    case 'magisterium-en': {
+      const job = await getJob(c.env.DB, id);
+      if (!job) return c.json({ error: 'not found' }, 404);
+      const lang = action === 'magisterium-en' ? 'en' : 'hr';
+      const { row, deduped } = await enqueueMagisteriumJob(c.env.DB, {
+        youtubeId: job.youtube_id,
+        lang,
+        source: 'admin',
+      });
+      return c.json({ ok: true, magisterium: row, deduped });
+    }
     default:
       return c.json({ error: `nepoznata akcija: ${action}` }, 400);
   }

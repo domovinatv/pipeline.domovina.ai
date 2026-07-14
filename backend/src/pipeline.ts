@@ -163,14 +163,17 @@ export async function reconcilePublishedJobs(
  * Sastavi izvještaj o koracima za jedan video. Probe-ovi idu paralelno.
  * Logika statusa po koraku:
  *   artefakt postoji            → done
- *   nema, korak je optional     → skipped (npr. Magisterium bez --with-magisterium)
- *   nema, korak je obavezan     → pending (čeka pipeline)
+ *   nema, korak obavezan        → pending (čeka pipeline)
+ *   nema, korak optional (Magisterium):
+ *     with_magisterium ≠ 0      → pending ("čeka" — puna obrada se očekuje, MCP run još nije napravljen)
+ *     with_magisterium = 0      → skipped ("preskočeno" — admin isključio za ovaj video)
  */
 export async function buildPipelineReport(
   cdnBase: string,
-  job: { youtube_id: string; state: string; detail_url: string | null },
+  job: { youtube_id: string; state: string; detail_url: string | null; with_magisterium?: number },
   siteBase?: string,
 ): Promise<PipelineReport> {
+  const wantMagisterium = job.with_magisterium !== 0; // undefined/1 → želimo; 0 → admin isključio
   const probes = await Promise.all(
     PIPELINE_STEPS.map((s) =>
       s.artifact ? artifactExists(cdnBase, job.youtube_id, s.artifact) : Promise.resolve(false),
@@ -179,7 +182,14 @@ export async function buildPipelineReport(
 
   const steps: StepStatus[] = PIPELINE_STEPS.map((s, i) => {
     const present = probes[i];
-    const state: StepState = present ? 'done' : s.optional ? 'skipped' : 'pending';
+    // Optional korak (Magisterium): odsutan artefakt je "čeka" ako je namjera obraditi, inače "preskočeno".
+    const state: StepState = present
+      ? 'done'
+      : s.optional
+        ? wantMagisterium
+          ? 'pending'
+          : 'skipped'
+        : 'pending';
     // Link nudimo samo kad artefakt stvarno postoji (inače bi 404-ao).
     const url = present && s.artifact ? `${cdnBase}/data/${job.youtube_id}/${s.artifact}` : null;
     return { key: s.key, label: s.label, note: s.note, optional: !!s.optional, state, url };

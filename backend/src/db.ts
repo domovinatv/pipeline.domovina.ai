@@ -1,8 +1,8 @@
-import type { ApiKeyRow, JobRow, JobState } from './types';
+import type { ApiKeyRow, JobRow, JobState, MagisteriumJobRow } from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
+  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, with_magisterium, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
 
 export interface CreateJobInput {
   youtubeId: string;
@@ -14,6 +14,7 @@ export interface CreateJobInput {
   priceCents?: number;
   priority?: number; // 0 standard | 1 prioritet
   creditCost?: number; // rezervirani krediti (1 standard, 3 prioritet)
+  withMagisterium?: boolean; // default true — želimo li Magisterium (KORAK 8.5) za ovaj video
 }
 
 // Vrati postojeći ne-terminalni job za isti video (idempotencija/dedup), ako postoji.
@@ -92,8 +93,8 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
   const ts = nowSec();
   await db
     .prepare(
-      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, 0, ?, ?)`,
+      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, 0, ?, ?)`,
     )
     .bind(
       id,
@@ -106,6 +107,7 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.priceCents ?? 0,
       input.priority ?? 0,
       input.creditCost ?? 1,
+      input.withMagisterium === false ? 0 : 1,
       ts,
       ts,
     )
@@ -160,9 +162,12 @@ export async function listJobs(db: D1Database, opts: ListOpts = {}): Promise<Job
   const offset = Math.max(opts.offset ?? 0, 0);
   const { where, binds } = buildFilter(opts);
   // LEFT JOIN api_keys → tko je predao job (ime ključa); NULL za admin/bridge unos.
+  // Korelirani subupiti → najnovije Magisterium (re)obrada stanje po jeziku (za admin badge/gumb).
   const res = await db
     .prepare(
-      `SELECT ${JOB_COLS_J}, ak.name AS api_key_name
+      `SELECT ${JOB_COLS_J}, ak.name AS api_key_name,
+              (SELECT m.state FROM magisterium_jobs m WHERE m.youtube_id = j.youtube_id AND m.lang = 'hr' ORDER BY m.created_at DESC LIMIT 1) AS mag_hr_state,
+              (SELECT m.state FROM magisterium_jobs m WHERE m.youtube_id = j.youtube_id AND m.lang = 'en' ORDER BY m.created_at DESC LIMIT 1) AS mag_en_state
        FROM jobs j LEFT JOIN api_keys ak ON ak.id = j.api_key_id
        ${where} ORDER BY j.created_at DESC LIMIT ? OFFSET ?`,
     )
@@ -540,4 +545,146 @@ export async function prioritizeJob(
 
 export async function touchApiKey(db: D1Database, id: string): Promise<void> {
   await db.prepare(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`).bind(nowSec(), id).run();
+}
+
+// Uključi/isključi Magisterium namjeru za jedan job (admin checkbox u listi). Utječe na
+// status-prikaz ("čeka" vs "preskočeno") i na cron auto-enqueue.
+export async function setJobMagisterium(db: D1Database, id: string, on: boolean): Promise<void> {
+  await db
+    .prepare(`UPDATE jobs SET with_magisterium=?, updated_at=? WHERE id=?`)
+    .bind(on ? 1 : 0, nowSec(), id)
+    .run();
+}
+
+// ───────────────────────── Magisterium (re)obrada queue (magisterium_jobs) ─────────────────────────
+const MAG_COLS =
+  'id, youtube_id, lang, state, source, error, created_at, updated_at, claimed_at, done_at';
+
+export async function getMagisteriumJob(db: D1Database, id: string): Promise<MagisteriumJobRow | null> {
+  const row = await db
+    .prepare(`SELECT ${MAG_COLS} FROM magisterium_jobs WHERE id = ?`)
+    .bind(id)
+    .first<MagisteriumJobRow>();
+  return row ?? null;
+}
+
+// Ubaci zahtjev za Magisterium (re)obradu videa (HR default, EN samo eksplicitno). Idempotentno:
+// ako VEĆ postoji aktivan (queued/running) zahtjev za isti (video, jezik) — vrati njega (deduped),
+// ne stvaraj duplikat (partial unique index idx_mag_jobs_active isto štiti od race-a).
+export async function enqueueMagisteriumJob(
+  db: D1Database,
+  input: { youtubeId: string; lang?: string; source?: string },
+): Promise<{ row: MagisteriumJobRow; deduped: boolean }> {
+  const lang = input.lang === 'en' ? 'en' : 'hr';
+  const existing = await db
+    .prepare(
+      `SELECT ${MAG_COLS} FROM magisterium_jobs WHERE youtube_id=? AND lang=? AND state IN ('queued','running') ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(input.youtubeId, lang)
+    .first<MagisteriumJobRow>();
+  if (existing) return { row: existing, deduped: true };
+
+  const id = newId();
+  const ts = nowSec();
+  try {
+    await db
+      .prepare(
+        `INSERT INTO magisterium_jobs (id, youtube_id, lang, state, source, created_at, updated_at)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+      )
+      .bind(id, input.youtubeId, lang, input.source ?? 'admin', ts, ts)
+      .run();
+  } catch {
+    // Race: drugi zahtjev je upravo ubacio aktivni red (partial unique index) → vrati postojeći.
+    const row = await db
+      .prepare(
+        `SELECT ${MAG_COLS} FROM magisterium_jobs WHERE youtube_id=? AND lang=? AND state IN ('queued','running') ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(input.youtubeId, lang)
+      .first<MagisteriumJobRow>();
+    if (row) return { row, deduped: true };
+    throw new Error('enqueueMagisteriumJob: insert nije uspio');
+  }
+  return { row: (await getMagisteriumJob(db, id))!, deduped: false };
+}
+
+// Atomski claim: pokupi do `max` queued Magisterium zahtjeva → 'running' (bridge poller).
+// Bez D1 transakcija — conditional UPDATE (state='queued' guard), isto kao claimJobs.
+export async function claimMagisteriumJobs(db: D1Database, max: number): Promise<MagisteriumJobRow[]> {
+  const n = Math.min(Math.max(max, 1), 10);
+  const candidates = await db
+    .prepare(`SELECT ${MAG_COLS} FROM magisterium_jobs WHERE state='queued' ORDER BY created_at ASC LIMIT ?`)
+    .bind(n)
+    .all<MagisteriumJobRow>();
+  const claimed: MagisteriumJobRow[] = [];
+  const ts = nowSec();
+  for (const row of candidates.results ?? []) {
+    const upd = await db
+      .prepare(`UPDATE magisterium_jobs SET state='running', claimed_at=?, updated_at=? WHERE id=? AND state='queued'`)
+      .bind(ts, ts, row.id)
+      .run();
+    if (upd.meta.changes === 1) claimed.push({ ...row, state: 'running', claimed_at: ts, updated_at: ts });
+  }
+  return claimed;
+}
+
+// Poller javlja ishod: state='done' (obrađeno/verificirano na CDN-u) ili 'failed' (+error).
+export async function updateMagisteriumJob(
+  db: D1Database,
+  id: string,
+  input: { state?: string; error?: string | null },
+): Promise<MagisteriumJobRow | null> {
+  const sets: string[] = ['updated_at=?'];
+  const binds: unknown[] = [nowSec()];
+  if (input.state !== undefined) {
+    sets.push('state=?');
+    binds.push(input.state);
+    if (input.state === 'done') {
+      sets.push('done_at=?');
+      binds.push(nowSec());
+    }
+  }
+  if (input.error !== undefined) {
+    sets.push('error=?');
+    binds.push(input.error);
+  }
+  binds.push(id);
+  await db.prepare(`UPDATE magisterium_jobs SET ${sets.join(', ')} WHERE id=?`).bind(...binds).run();
+  return getMagisteriumJob(db, id);
+}
+
+export async function listMagisteriumJobs(
+  db: D1Database,
+  opts: { state?: string; limit?: number } = {},
+): Promise<MagisteriumJobRow[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 200);
+  const where = opts.state ? ' WHERE state=?' : '';
+  const binds: unknown[] = opts.state ? [opts.state] : [];
+  const res = await db
+    .prepare(`SELECT ${MAG_COLS} FROM magisterium_jobs${where} ORDER BY created_at DESC LIMIT ?`)
+    .bind(...binds, limit)
+    .all<MagisteriumJobRow>();
+  return res.results ?? [];
+}
+
+// Cron auto-enqueue: done jobovi s with_magisterium=1 koji JOŠ NEMAJU nijedan magisterium_jobs
+// zapis (bilo kojeg stanja) → auto-ubaci HR zahtjev (source='auto'). Idempotentno: poller prvo
+// provjeri CDN artefakt i preskoči run ako Magisterium već postoji. Jednom pokušano (uklj. failed)
+// → ne re-enqueuea se (spriječi petlju); ručni gumb u adminu svejedno može ponovno zatražiti.
+export async function autoEnqueueMagisterium(db: D1Database, cap = 10): Promise<number> {
+  const rows = await db
+    .prepare(
+      `SELECT j.youtube_id AS youtube_id FROM jobs j
+       WHERE j.state='done' AND j.with_magisterium=1 AND j.deleted_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM magisterium_jobs m WHERE m.youtube_id=j.youtube_id AND m.lang='hr')
+       ORDER BY j.updated_at DESC LIMIT ?`,
+    )
+    .bind(Math.min(Math.max(cap, 1), 25))
+    .all<{ youtube_id: string }>();
+  let n = 0;
+  for (const r of rows.results ?? []) {
+    const { deduped } = await enqueueMagisteriumJob(db, { youtubeId: r.youtube_id, lang: 'hr', source: 'auto' });
+    if (!deduped) n++;
+  }
+  return n;
 }

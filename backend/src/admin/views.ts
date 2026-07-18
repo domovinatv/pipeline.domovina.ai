@@ -18,7 +18,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.6.0';
+export const APP_VERSION = 'v0.7.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -46,104 +46,132 @@ const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 51
 
 const BASE_STYLE = `<style>
 :root {
-  --navy: #002F6C; --red: #FF0000; --muted: #5A6570;
-  --border: #E1E5EA; --surface: #F5F7F9; --bg: #FFFFFF;
+  --navy: #002F6C; --navy-h: #01418F; --red: #FF0000;
+  --ink: #13253C; --muted: #5B6B7C; --faint: #93A0AF;
+  --border: #E3E8EF; --border-strong: #C9D4E0;
+  --surface: #F1F4F9; --bg: #FFFFFF; --card: #FFFFFF; --page: #F4F6FA;
   --success: #2E8540; --warning: #B45309; --danger: #B42318;
-  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --radius: 14px; --radius-sm: 10px;
+  --shadow-sm: 0 1px 2px rgba(16,32,54,.05), 0 1px 3px rgba(16,32,54,.07);
+  --shadow-md: 0 4px 12px -2px rgba(16,32,54,.08), 0 16px 36px -16px rgba(0,47,108,.18);
+  --ring: 0 0 0 3px rgba(1,65,134,.14);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: var(--bg); color: var(--navy); }
-a { color: var(--navy); }
-.tricolor { display: flex; height: 6px; }
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; background: var(--page); color: var(--ink); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+a { color: var(--navy-h); }
+::selection { background: #CFE0F5; }
+.tricolor { display: flex; height: 5px; }
 .tricolor span { flex: 1; }
 .tricolor .red { background: var(--red); }
 .tricolor .navy { background: var(--navy); }
+/* Sticky header s blagim blur efektom — chrome ostaje vidljiv pri scrollu */
 header {
-  padding: .9rem 1.5rem; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 40;
+  padding: .7rem 1.5rem; border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,.88); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
 }
 header .brand { display: flex; align-items: center; gap: .6rem; }
-header .brand .word { font-weight: 800; letter-spacing: .04em; font-size: 1.1rem; }
+header .brand .word { font-weight: 800; letter-spacing: .04em; font-size: 1.05rem; color: var(--navy); white-space: nowrap; }
 header .brand .accent { color: var(--red); }
 header .badge {
   background: var(--surface); border: 1px solid var(--border);
-  padding: .25rem .6rem; border-radius: 1rem; font-size: .8rem;
-  color: var(--muted); font-weight: 600;
+  padding: .25rem .7rem; border-radius: 999px; font-size: .78rem;
+  color: var(--muted); font-weight: 600; white-space: nowrap;
 }
-main { padding: 1.5rem; max-width: 90rem; margin: 0 auto; }
-h1 { font-size: 1.45rem; margin: 0 0 1rem; }
-.stats { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+main { padding: 1.75rem 1.5rem 3rem; max-width: 86rem; margin: 0 auto; }
+h1 { font-size: 1.4rem; font-weight: 800; letter-spacing: -.01em; color: var(--navy); margin: 0 0 1.1rem; }
+/* Stat-kartice: bijele s bočnom akcent trakom u boji stanja (auto-fill drži karticu kompaktnom i kad ih je malo) */
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.75rem, 1fr)); gap: .7rem; margin-bottom: 1.4rem; }
 .stat {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: .5rem; padding: .55rem .9rem; min-width: 6.5rem;
+  position: relative; overflow: hidden; min-width: 0;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: .7rem .95rem .75rem; box-shadow: var(--shadow-sm);
 }
+.stat::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border-strong); }
 .stat .label {
-  font-size: .72rem; color: var(--muted); text-transform: uppercase;
-  letter-spacing: .05em; font-weight: 700;
+  font-size: .68rem; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .07em; font-weight: 700;
 }
-.stat .value { font-size: 1.35rem; font-weight: 700; }
-/* Stat-pločice obojane po stanju — iste semantičke boje kao pillovi u listi */
-.stat.s-queued      { background: #E7EEF8; border-color: #CDDDF6; }
+.stat .value { font-size: 1.5rem; font-weight: 800; margin-top: .1rem; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.stat.s-queued::before { background: #1D4ED8; }
 .stat.s-queued .value { color: #1D4ED8; }
-.stat.s-fetching,
-.stat.s-transcribing,
-.stat.s-processing  { background: #FDF1E0; border-color: #F5DEB8; }
+.stat.s-fetching::before,
+.stat.s-transcribing::before,
+.stat.s-processing::before { background: #D97706; }
 .stat.s-fetching .value,
 .stat.s-transcribing .value,
 .stat.s-processing .value { color: #B45309; }
-.stat.s-done        { background: #E0F1E5; border-color: #BFE3CC; }
-.stat.s-done .value { color: #2E8540; }
-.stat.s-failed      { background: #F8E2E0; border-color: #F3C9C5; }
-.stat.s-failed .value { color: #B42318; }
-.stat.s-skipped     { background: #ECEFF2; border-color: #D4D9DE; }
+.stat.s-done::before { background: var(--success); }
+.stat.s-done .value { color: var(--success); }
+.stat.s-failed::before { background: var(--danger); }
+.stat.s-failed .value { color: var(--danger); }
+.stat.s-skipped::before { background: #94A3B8; }
 .stat.s-skipped .value { color: #5A6570; }
-.stat.s-postponed   { background: #F3E8FF; border-color: #E3D4FB; }
+.stat.s-postponed::before { background: #7C3AED; }
 .stat.s-postponed .value { color: #7C3AED; }
+/* Enqueue kartica */
 .addbox {
-  background: var(--surface); border: 1px solid var(--border); border-radius: .6rem;
-  padding: 1rem; margin-bottom: 1.25rem;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1.1rem 1.2rem 1.15rem; margin-bottom: 1.4rem; box-shadow: var(--shadow-sm);
 }
-.addbox form { display: flex; flex-direction: column; gap: .7rem; align-items: stretch; }
-.addbox .field { display: flex; flex-direction: column; gap: .25rem; }
-.addbox label { font-size: .75rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.addbox input {
-  border: 1px solid var(--border); border-radius: .4rem; padding: .5rem .75rem;
-  font-size: .95rem; font-family: inherit; background: var(--bg); color: var(--navy);
-  width: 100%;
+.addbox form { display: flex; flex-direction: column; gap: .8rem; align-items: stretch; }
+.addbox .field { display: flex; flex-direction: column; gap: .3rem; }
+.addbox label { font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.addbox input:not([type=checkbox]):not([type=radio]) {
+  border: 1px solid var(--border); border-radius: .6rem; padding: .6rem .8rem;
+  font-size: .95rem; font-family: inherit; background: var(--bg); color: var(--ink);
+  width: 100%; transition: border-color .15s, box-shadow .15s;
 }
+.addbox input::placeholder { color: var(--faint); }
+.addbox input:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
+.addbox input[type=checkbox], .addbox input[type=radio] { accent-color: var(--navy-h); width: 1rem; height: 1rem; flex: none; }
 .addbox button {
-  border: 0; border-radius: .4rem; padding: .6rem 1.2rem; font-size: .95rem;
-  font-weight: 700; cursor: pointer; background: var(--navy); color: #fff;
+  border: 0; border-radius: .65rem; padding: .65rem 1.3rem; font-size: .95rem;
+  font-weight: 700; cursor: pointer; color: #fff;
+  background: linear-gradient(180deg, #0B4C9E 0%, var(--navy) 100%);
+  box-shadow: 0 1px 2px rgba(0,47,108,.4), inset 0 1px 0 rgba(255,255,255,.14);
   align-self: flex-start; display: inline-flex; align-items: center; gap: .5rem;
+  transition: transform .12s, box-shadow .15s, filter .15s;
 }
-.addbox button:hover { background: #013a86; }
+.addbox button:hover { filter: brightness(1.1); box-shadow: 0 3px 10px rgba(0,47,108,.3), inset 0 1px 0 rgba(255,255,255,.14); }
+.addbox button:active { transform: translateY(1px); }
 /* Bijeli "+" — emoji ➕ ignorira CSS color (ostaje tamno siv na navy); plain glyph nasljeđuje #fff */
 .addbox button .plus { color: #fff; font-weight: 900; font-size: 1.15em; line-height: 1; }
-.addbox .hint { font-size: .8rem; color: var(--muted); margin-top: .5rem; }
+.addbox .hint { font-size: .8rem; color: var(--muted); margin-top: .6rem; line-height: 1.45; }
 /* YouTube oEmbed preview (readonly) */
-.ytprev { display: flex; gap: .8rem; align-items: center; margin-top: .8rem; padding: .6rem; background: var(--bg); border: 1px solid var(--border); border-radius: .5rem; }
-.ytprev[hidden] { display: none; }
-.ytprev img { width: 120px; height: 68px; object-fit: cover; border-radius: .35rem; flex: none; background: var(--surface); }
-.ytprev-title { font-weight: 700; font-size: .95rem; line-height: 1.25; }
-.ytprev-sub { font-size: .85rem; margin-top: .15rem; }
-.ytprev-link { font-size: .82rem; display: inline-block; margin-top: .3rem; }
+.ytprev { display: flex; gap: .8rem; align-items: center; margin-top: .8rem; padding: .6rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ytprev img { width: 120px; height: 68px; object-fit: cover; border-radius: .45rem; flex: none; background: var(--border); }
+.ytprev-meta { min-width: 0; }
+.ytprev-title { font-weight: 700; font-size: .92rem; line-height: 1.3; }
+.ytprev-sub { font-size: .83rem; margin-top: .15rem; }
+.ytprev-link { font-size: .82rem; display: inline-block; margin-top: .3rem; font-weight: 600; }
 /* Akcijski gumbi u tablici */
-button.act { border: 1px solid var(--border); background: var(--bg); color: var(--navy); border-radius: .35rem; padding: .2rem .5rem; font-size: .78rem; font-weight: 600; cursor: pointer; margin-right: .25rem; margin-bottom: .25rem; }
-button.act:hover { background: var(--surface); }
+button.act {
+  border: 1px solid var(--border); background: var(--card); color: var(--navy);
+  border-radius: .5rem; padding: .28rem .6rem; font-size: .78rem; font-weight: 600;
+  cursor: pointer; margin-right: .25rem; margin-bottom: .25rem; font-family: inherit;
+  transition: background .12s, border-color .12s, transform .1s;
+}
+button.act:hover { background: var(--surface); border-color: var(--border-strong); }
 button.act.del { color: var(--danger); border-color: #f3c9c5; }
 /* Video čelija u tablici: thumbnail + ID */
-.vidcell { display: flex; align-items: center; gap: .5rem; }
-.rthumb { width: 88px; height: 50px; object-fit: cover; border-radius: .3rem; flex: none; background: var(--surface); }
-td .sub { font-size: .8rem; margin-top: .15rem; }
-.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: .5rem; background: var(--bg); }
+.vidcell { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.rthumb { width: 88px; height: 50px; object-fit: cover; border-radius: .45rem; flex: none; background: var(--surface); border: 1px solid var(--border); }
+td .sub { font-size: .8rem; margin-top: .2rem; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow-sm); }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
-th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-th { background: var(--surface); font-weight: 700; color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+th, td { text-align: left; padding: .6rem .85rem; border-bottom: 1px solid var(--surface); vertical-align: top; }
+th { background: #F8FAFC; font-weight: 700; color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; border-bottom: 1px solid var(--border); }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover { background: var(--surface); }
+tbody tr { transition: background .12s; }
+tbody tr:hover { background: #F8FAFC; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 .dim { color: var(--muted); }
-.pill { display: inline-block; padding: .15rem .55rem; border-radius: 1rem; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.pill { display: inline-block; padding: .16rem .58rem; border-radius: 999px; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
 .pill.ok { background: #E0F1E5; color: var(--success); }
 .pill.bad { background: #F8E2E0; color: var(--danger); }
 .pill.warn { background: #FDF1E0; color: var(--warning); }
@@ -164,8 +192,16 @@ tbody tr:hover { background: var(--surface); }
 .pill.mag-done   { background: #E0F1E5; color: #2E8540; border: 1px solid #BFE3CC; }   /* done */
 .pill.mag-failed { background: #F8E2E0; color: #B42318; border: 1px solid #F3C9C5; }   /* failed */
 /* Tier izbor u enqueue formi + "Forsiraj sada" gumb */
-.tierpick { display: flex; flex-direction: column; gap: .3rem; }
-.tieropt { font-weight: 400; display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+.tierpick { display: flex; flex-direction: column; gap: .45rem; }
+label.tieropt {
+  font-weight: 400; display: flex; align-items: flex-start; gap: .55rem; cursor: pointer;
+  border: 1px solid var(--border); border-radius: .6rem; padding: .55rem .75rem;
+  background: var(--bg); transition: border-color .15s, background .15s, box-shadow .15s;
+  text-transform: none; letter-spacing: 0; font-size: .9rem; color: var(--ink); line-height: 1.4;
+}
+.tieropt input { margin-top: .18rem; }
+.tieropt:hover { border-color: var(--border-strong); }
+.tieropt:has(input:checked) { border-color: var(--navy-h); background: #F0F6FF; }
 .prio-btn { border-color: #FDE68A; color: #92400E; }
 /* Semantičke boje po stanju (pill klasa = ime stanja) */
 .pill.queued      { background: #E7EEF8; color: #1D4ED8; }   /* plava — čeka */
@@ -178,15 +214,16 @@ tbody tr:hover { background: var(--surface); }
 .pill.postponed   { background: #F3E8FF; color: #7C3AED; }   /* ljubičasta — odgođeno */
 /* "koraci" toggle ispod statusa — otvara per-korak pipeline prikaz */
 .pillbtn {
-  font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--bg);
-  color: var(--navy); padding: .15rem .5rem; margin-top: .35rem; border-radius: .35rem;
+  font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--card);
+  color: var(--navy); padding: .18rem .55rem; margin-top: .35rem; border-radius: .5rem;
   font-size: .76rem; font-weight: 700; white-space: nowrap; display: inline-flex; align-items: center; gap: .25rem;
+  transition: background .12s, border-color .12s;
 }
-.pillbtn:hover { background: var(--surface); }
+.pillbtn:hover { background: var(--surface); border-color: var(--border-strong); }
 .pillbtn[aria-expanded="true"] { background: var(--navy); color: #fff; border-color: var(--navy); }
 /* Expandable redak s koracima */
-tr.detail-row > td { background: var(--surface); padding: .4rem 1rem 1rem; }
-.steps-head { font-size: .8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: .3rem 0 .6rem; }
+tr.detail-row > td { background: #F8FAFC; padding: .5rem 1rem 1rem; }
+.steps-head { font-size: .76rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: .3rem 0 .6rem; }
 .steps { list-style: none; margin: 0; padding: 0; max-width: 38rem; }
 .steps li { position: relative; display: flex; align-items: flex-start; gap: .6rem; padding: .3rem 0 .3rem .2rem; }
 /* Vertikalna spojnica između točkica koraka */
@@ -199,11 +236,11 @@ tr.detail-row > td { background: var(--surface); padding: .4rem 1rem 1rem; }
 .steps .s-label { font-weight: 700; font-size: .92rem; }
 .steps .s-note { color: var(--muted); font-size: .78rem; margin-top: .05rem; }
 .steps li.is-pending .s-label { color: var(--muted); }
-.steps .s-open { flex: none; font-size: .78rem; font-weight: 700; text-decoration: none; color: var(--navy); border: 1px solid var(--border); border-radius: .3rem; padding: .1rem .4rem; white-space: nowrap; }
-.steps .s-open:hover { background: var(--bg); border-color: var(--navy); }
+.steps .s-open { flex: none; font-size: .78rem; font-weight: 700; text-decoration: none; color: var(--navy); border: 1px solid var(--border); border-radius: .4rem; padding: .12rem .45rem; white-space: nowrap; background: var(--card); }
+.steps .s-open:hover { border-color: var(--navy); }
 .steps .s-badge { margin-left: .5rem; flex: none; }
 .s-badge.done    { background: #E0F1E5; color: var(--success); }
-.s-badge.pending { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.s-badge.pending { background: var(--card); color: var(--muted); border: 1px solid var(--border); }
 .s-badge.skipped { background: #F3E8FF; color: #7C3AED; }
 .steps-loading { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
 /* Akcijski gumbi: boja akcije == boja stanja koje proizvodi (vizualna veza) */
@@ -232,48 +269,95 @@ tr.deleted td { text-decoration: line-through; opacity: .55; }
 tr.deleted .act { text-decoration: none; opacity: 1; }
 /* Filter/search kontrole + pager */
 .controls select, .controls input {
-  border: 1px solid var(--border); border-radius: .4rem; padding: .35rem .6rem;
-  font-size: .88rem; font-family: inherit; background: var(--bg); color: var(--navy);
+  border: 1px solid var(--border); border-radius: .55rem; padding: .45rem .65rem;
+  font-size: .88rem; font-family: inherit; background: var(--card); color: var(--ink);
+  transition: border-color .15s, box-shadow .15s;
 }
+.controls select:focus, .controls input:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
 .controls .search { min-width: 14rem; }
 .controls .spacer { flex: 1; }
 .pager { display: flex; align-items: center; gap: .75rem; margin-top: .9rem; flex-wrap: wrap; }
 .pager button {
-  border: 1px solid var(--border); background: var(--bg); color: var(--navy);
-  border-radius: .4rem; padding: .35rem .8rem; font-size: .88rem; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--border); background: var(--card); color: var(--navy);
+  border-radius: .55rem; padding: .4rem .9rem; font-size: .88rem; font-weight: 600; cursor: pointer;
+  transition: background .12s, border-color .12s;
 }
-.pager button:hover:not(:disabled) { background: var(--surface); }
+.pager button:hover:not(:disabled) { background: var(--surface); border-color: var(--border-strong); }
 .pager button:disabled { opacity: .4; cursor: not-allowed; }
 .pager .info { font-size: .85rem; color: var(--muted); }
-.controls { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
-.controls .auto { font-size: .82rem; color: var(--success); font-weight: 700; }
+.controls { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-bottom: .85rem; }
+.controls .auto { font-size: .8rem; color: var(--success); font-weight: 700; }
 .empty { text-align: center; padding: 2rem; color: var(--muted); }
-/* Tabovi (Queue / API ključevi) */
-.tabs { display: flex; gap: .5rem; margin-bottom: 1.1rem; }
-.tabs .tab {
-  padding: .4rem .9rem; border: 1px solid var(--border); border-radius: .4rem;
-  text-decoration: none; font-weight: 700; font-size: .9rem; color: var(--muted); background: var(--surface);
+/* Tabovi (Queue / API ključevi) — segmentirana kontrola */
+.tab {
+  display: inline-block; padding: .42rem .95rem; border: 1px solid var(--border); border-radius: .55rem;
+  text-decoration: none; font-weight: 700; font-size: .88rem; color: var(--muted); background: var(--card);
+  transition: color .12s, background .12s, box-shadow .12s;
 }
-.tabs .tab.active { background: var(--navy); color: #fff; border-color: var(--navy); }
-.tabs .tab:hover:not(.active) { background: #eef1f4; }
+.tabs { display: inline-flex; gap: .25rem; margin-bottom: 1.2rem; background: #E9EDF3; border: 1px solid var(--border); border-radius: .75rem; padding: .25rem; }
+.tabs .tab { border: 0; border-radius: .55rem; background: transparent; }
+.tabs .tab.active { background: var(--card); color: var(--navy); box-shadow: var(--shadow-sm); }
+.tabs .tab:hover:not(.active) { color: var(--navy); }
 /* Flash: jednokratni prikaz sirovog API ključa */
-.flash { background: #FFF8E1; border: 1px solid #F5DEB8; border-radius: .5rem; padding: 1rem; margin-bottom: 1.25rem; }
+.flash { background: #FFF8E1; border: 1px solid #F5DEB8; border-radius: var(--radius-sm); padding: 1rem; margin-bottom: 1.25rem; box-shadow: var(--shadow-sm); }
 .flash .key {
-  display: block; margin: .6rem 0 .3rem; padding: .55rem .7rem; background: var(--bg);
-  border: 1px solid var(--border); border-radius: .4rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  display: block; margin: .6rem 0 .3rem; padding: .55rem .7rem; background: var(--card);
+  border: 1px solid var(--border); border-radius: .5rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: .95rem; font-weight: 700; word-break: break-all; color: var(--navy);
 }
 /* Krediti + inline akcijske forme u tablici ključeva */
-.credits { font-weight: 800; font-size: 1.05rem; }
+.credits { font-weight: 800; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
 .credits.pos { color: var(--success); }
 .credits.zero { color: var(--danger); }
 .keyact { display: inline-flex; gap: .3rem; align-items: center; margin: 0 .4rem .25rem 0; }
-.cred-inp { width: 4.5rem; border: 1px solid var(--border); border-radius: .35rem; padding: .2rem .4rem; font-size: .82rem; font-family: inherit; }
-footer { margin: 2rem 0 0; padding: 1rem 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .82rem; text-align: center; }
-@media (max-width: 720px) {
-  header { padding: .7rem 1rem; } main { padding: 1rem; }
-  .addbox input.url { min-width: 100%; }
-  th, td { padding: .45rem .55rem; font-size: .82rem; }
+.cred-inp { width: 4.5rem; border: 1px solid var(--border); border-radius: .45rem; padding: .25rem .45rem; font-size: .82rem; font-family: inherit; background: var(--card); color: var(--ink); }
+.cred-inp:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
+footer { margin: 2rem 0 0; padding: 1.1rem 1.5rem 1.4rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .8rem; text-align: center; background: var(--card); }
+/* ── Mobile: tablice postaju kartice (data-l atribut na <td> = labela kolone) ── */
+@media (max-width: 760px) {
+  header { padding: .55rem 1rem; }
+  header .badge { display: none; }
+  main { padding: 1rem .9rem 2.25rem; }
+  h1 { font-size: 1.2rem; }
+  .stats { grid-template-columns: repeat(2, 1fr); gap: .55rem; }
+  .stat { padding: .6rem .8rem .65rem; }
+  .stat .value { font-size: 1.3rem; }
+  .addbox { padding: .95rem .95rem 1rem; }
+  .addbox button { width: 100%; justify-content: center; }
+  .controls { gap: .5rem; }
+  .controls .search { flex: 1 1 100%; min-width: 0; }
+  /* Tablica → kartice: thead nestaje, svaki <tr> je kartica, ::before nosi labelu kolone */
+  .table-wrap { border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+  table, tbody { display: block; width: 100%; }
+  thead { display: none; }
+  tbody tr {
+    display: block; background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-sm);
+    padding: .3rem .85rem; margin-bottom: .7rem;
+  }
+  tbody tr:hover { background: var(--card); }
+  tbody td { display: block; width: 100%; border-bottom: 1px solid var(--surface); padding: .6rem 0; }
+  tbody tr td:last-child { border-bottom: 0; }
+  td[data-l]::before {
+    content: attr(data-l); display: block; font-size: .64rem; font-weight: 800;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-bottom: .3rem;
+  }
+  /* Detail (koraci) kartica se vizualno "lijepi" na karticu retka iznad */
+  tr.detail-row { margin-top: -.75rem; border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+  tr.detail-row > td { margin: 0 -.85rem; width: calc(100% + 1.7rem); padding: .5rem .85rem .9rem; border-radius: 0 0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px); }
+  .rthumb { width: 104px; height: 59px; }
+  .steps { max-width: 100%; }
+  .steps li { flex-wrap: wrap; }
+  .steps .s-badge { margin-left: auto; }
+  /* Veće touch mete */
+  button.act { padding: .45rem .7rem; font-size: .84rem; }
+  .pillbtn { padding: .35rem .6rem; }
+  .pager { justify-content: center; }
+  footer { padding: 1rem; }
+}
+@media (max-width: 400px) {
+  header .brand .word { font-size: .95rem; }
+  .keyact { flex-wrap: wrap; }
 }
 </style>`;
 
@@ -610,7 +694,8 @@ async function refresh(){
       const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
-      var row = '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td><td>'+actions(j)+'</td></tr>';
+      // data-l = labela kolone za mobile karticu (CSS ::before)
+      var row = '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>';
       return row + detailRow(j);
     }).join('');
     const shown = (data.jobs||[]).length;
@@ -670,12 +755,12 @@ export function renderKeysPage(keys: ApiKeyRow[], flash?: { rawKey: string; name
         ? `<form method="POST" action="/admin/keys/${k.id}/disable" class="keyact"><button class="act a-skip">Onemogući</button></form>`
         : `<form method="POST" action="/admin/keys/${k.id}/enable" class="keyact"><button class="act a-requeue">Omogući</button></form>`;
       return `<tr>
-      <td>${escapeHtml(k.name)}<div class="dim sub mono">${escapeHtml(k.key_hash.slice(0, 12))}…</div></td>
-      <td><span class="credits ${k.credits > 0 ? 'pos' : 'zero'}">${k.credits}</span></td>
-      <td>${status}</td>
-      <td class="dim">${fmtTs(k.created_at)}</td>
-      <td class="dim">${fmtTs(k.last_used_at)}</td>
-      <td>
+      <td data-l="Naziv">${escapeHtml(k.name)}<div class="dim sub mono">${escapeHtml(k.key_hash.slice(0, 12))}…</div></td>
+      <td data-l="Krediti"><span class="credits ${k.credits > 0 ? 'pos' : 'zero'}">${k.credits}</span></td>
+      <td data-l="Status">${status}</td>
+      <td class="dim" data-l="Kreiran">${fmtTs(k.created_at)}</td>
+      <td class="dim" data-l="Zadnje korišteno">${fmtTs(k.last_used_at)}</td>
+      <td data-l="Akcije">
         <form method="POST" action="/admin/keys/${k.id}/credits" class="keyact">
           <input type="number" name="amount" value="10" step="1" class="cred-inp" aria-label="iznos kredita (negativno = oduzmi)">
           <button class="act a-requeue">Primijeni</button>

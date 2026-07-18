@@ -48,6 +48,8 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
   .vlinks { display:flex; flex-direction:column; gap:.15rem; min-width:0; }
   .vlink { font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40ch; }
   .vlink.dim { color:var(--muted); }
+  /* Mobile: linkovi smiju zauzeti punu širinu kartice */
+  @media (max-width: 760px) { .vlinks { flex: 1; } .vlink { max-width: 100%; } }
 </style>
 <h1>Moj pipeline <span class="dim" style="font-size:.9rem;font-weight:600;">— ${escapeHtml(key.name)}</span></h1>
 
@@ -200,7 +202,8 @@ async function refresh(){
       else if (j.state==='queued' && !j.priority) res = '<button class="pillbtn prio-btn" data-prio="'+esc(j.id)+'" title="Obradi odmah preko Modala — naplati razliku (2 kredita)">⚡ Forsiraj sada</button>';
       else if (j.state==='failed' && j.error) res = '<span class="dim">'+esc(j.error).slice(0,80)+'</span>';
       else res = '<span class="dim">—</span>';
-      return '<tr><td class="dim">'+fmt(j.created_at)+'</td><td>'+vid+'</td><td>'+meta+'</td><td>'+statusCell(j)+'</td><td>'+res+'</td></tr>' + detailRow(j);
+      // data-l = labela kolone za mobile karticu (CSS ::before)
+      return '<tr><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Rezultat">'+res+'</td></tr>' + detailRow(j);
     }).join('');
     document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5" class="empty">Još nema obrada. Pošalji prvu gore.</td></tr>';
     document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');

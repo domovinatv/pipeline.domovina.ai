@@ -95,6 +95,16 @@ function readMeta(youtubeId) {
       const meta = readMeta(job.youtube_id) || {};
       await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', ...meta });
       console.log(`  ✅ obrađeno (Modal) → transcribing${meta.channel ? ' (' + meta.channel + ')' : ''}`);
+
+      // Auto-reuse za praćene kanale: ako video pripada nekoj automatic/podcasts listi
+      // i kanal ga je već fetchao, prekopiraj ad-hoc artefakte u channel dir + reindex
+      // da na kanalu ne stoji "U OBRADI". O(1) grep po listama; skupi reindex se pokreće
+      // samo kad je stvarno nešto kopirano. Ako video još nije fetchan u channel dir,
+      // nightly sweep (auto_reuse_adhoc.js --sweep) ga pokupi sljedeću noć. Best-effort.
+      const autoReuse = path.join(FETCH_REPO, 'auto_reuse_adhoc.js');
+      if (fs.existsSync(autoReuse)) {
+        spawnSync('node', [autoReuse, '--video-id', job.youtube_id], { cwd: FETCH_REPO, stdio: 'inherit' });
+      }
     } else {
       await api('PATCH', `/api/jobs/${job.id}`, {
         state: 'failed',

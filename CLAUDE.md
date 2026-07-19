@@ -10,7 +10,8 @@ Vidi `README.md` za arhitekturu. Ovdje samo konvencije za rad u kodu.
 - **Bridge**: plain Node skripte (`bridge/`) koje trče lokalno na Mac Miniju i
   spajaju cloud queue s pipelineom u `../fetch.domovina.tv`.
 - **Admin**: server-rendered HTML u Workeru (`src/admin/views.ts`), Basic Auth.
-  NEMA zasebnog frontend builda.
+  NEMA zasebnog frontend builda. UI konvencije (dizajn sustav, mobile kartice,
+  `data-l` pravilo za nove stupce, vizualna verifikacija) → `docs/UI.md`.
 
 ## Komande
 

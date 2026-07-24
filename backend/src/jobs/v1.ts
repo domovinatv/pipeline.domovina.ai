@@ -5,6 +5,7 @@ import {
   consumeApiKeyCredits,
   createImportedJob,
   createJob,
+  enqueueMagisteriumJob,
   findActiveJobByYoutubeId,
   findJobByYoutubeIdForKey,
   getApiKeyByHash,
@@ -13,6 +14,7 @@ import {
   prioritizeJob,
   touchApiKey,
 } from '../db';
+import { MAGISTERIUM_LANGS } from '../types';
 import { extractSourceRef, fetchOEmbed, sha256Hex } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
 
@@ -130,6 +132,30 @@ publicApi.post('/jobs/:id/prioritize', async (c) => {
   }
   const updated = await getJob(c.env.DB, job.id);
   return c.json({ job: updated, prioritized: true, credits_remaining: key.credits - UPGRADE_COST });
+});
+
+// One-click Magisterium (re)obrada za vlastiti GOTOV video (HR ili EN overlay).
+// Ubaci zahtjev u magisterium_jobs → bridge poller (Mac Mini) headless pokrene MCP
+// runbook i uploada artefakt na CDN. Idempotentno (unique aktivni po video+lang).
+// Ne troši kredite (Magisterium je dio pune obrade; EN je opt-in overlay).
+publicApi.post('/jobs/:id/magisterium', async (c) => {
+  const key = c.get('apiKey');
+  const job = await getJob(c.env.DB, c.req.param('id'));
+  if (!job || job.api_key_id !== key.id) return c.json({ error: 'not found' }, 404);
+  if (job.state !== 'done') {
+    return c.json({ error: 'Magisterium se pokreće tek kad je video gotov (done).' }, 409);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as { lang?: string };
+  const lang = body.lang === 'en' ? 'en' : 'hr';
+  if (!MAGISTERIUM_LANGS.includes(lang as never)) {
+    return c.json({ error: `lang '${lang}' nije podržan` }, 400);
+  }
+  const { row, deduped } = await enqueueMagisteriumJob(c.env.DB, {
+    youtubeId: job.youtube_id,
+    lang,
+    source: 'dashboard',
+  });
+  return c.json({ magisterium: row, deduped });
 });
 
 // Status vlastitog joba (ključ vidi samo svoje jobove).

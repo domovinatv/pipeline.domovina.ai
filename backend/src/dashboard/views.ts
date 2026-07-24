@@ -124,6 +124,42 @@ function transcribeBadge(j){
 function priorityBadge(j){
   return j.priority ? ' <span class="pill prio" title="Prioritetna obrada (Modal, odmah)">⚡ Prioritet</span>' : '';
 }
+// Magisterium (re)obrada stanje po jeziku — badge u meta čeliji (kad zahtjev postoji).
+function magStateBadge(j){
+  function one(lang, st){
+    if (!st) return '';
+    var lbl = lang.toUpperCase();
+    var cls = st==='done'?'done':(st==='failed'?'failed':(st==='running'?'run':'wait'));
+    var glyph = st==='done'?'✓':(st==='failed'?'⚠':(st==='running'?'⏳':'⧗'));
+    return ' <span class="pill mag mag-'+cls+'" title="Magisterium '+lbl+': '+esc(st)+'">🕊 '+lbl+' '+glyph+'</span>';
+  }
+  return one('hr', j.mag_hr_state)+one('en', j.mag_en_state);
+}
+// Magisterium one-click gumbi (samo za GOTOV video; sakriveni dok je zahtjev queued/running).
+function magBtns(j){
+  if (j.state!=='done') return '';
+  var out='';
+  var hrBusy = j.mag_hr_state==='queued' || j.mag_hr_state==='running';
+  var enBusy = j.mag_en_state==='queued' || j.mag_en_state==='running';
+  if (!hrBusy) out+='<button class="pillbtn mag-btn" data-mag="'+esc(j.id)+'" data-lang="hr" title="'+(j.mag_hr_state==='done'?'Ponovno Magisterium HR':'Pokreni Magisterium HR')+'">🕊 HR</button>';
+  if (!enBusy) out+='<button class="pillbtn mag-btn" data-mag="'+esc(j.id)+'" data-lang="en" title="'+(j.mag_en_state==='done'?'Ponovno Magisterium EN overlay':'Pokreni Magisterium EN overlay')+'">🕊 EN</button>';
+  return out;
+}
+// Pokreni Magisterium (HR/EN) za vlastiti gotov video.
+async function runMagisterium(id, lang){
+  var msg = document.getElementById('addmsg');
+  msg.textContent = 'Šaljem Magisterium '+lang.toUpperCase()+' zahtjev…';
+  try {
+    var r = await fetch('/api/v1/jobs/'+id+'/magisterium', { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify({ lang: lang }) });
+    var d = await r.json().catch(function(){ return {}; });
+    if (r.status === 409) { msg.textContent = '⚠ ' + (d.error || 'Video još nije gotov.'); }
+    else if (r.ok && d.deduped) { msg.textContent = '✓ Magisterium '+lang.toUpperCase()+' je već u redu / u tijeku.'; }
+    else if (r.ok) { msg.textContent = '✓ Magisterium '+lang.toUpperCase()+' pokrenut — obrada kreće uskoro.'; }
+    else { msg.textContent = '⚠ ' + (d.error || 'Greška.'); }
+  } catch(e){ msg.textContent = '⚠ Mrežna greška.'; }
+  refresh();
+}
+
 // "Forsiraj sada": digni queued standard job na prioritet (naplati razliku 2 kredita).
 async function prioritize(id){
   var msg = document.getElementById('addmsg');
@@ -200,10 +236,10 @@ async function refresh(){
       var vid = '<div class="vidcell">'+thumb(j)+'<div class="vlinks">'+links+'</div></div>';
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
-      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+priorityBadge(j)+transcribeBadge(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
-      // Rezultat: link kad gotovo; inače za queued standard job nudi "⚡ Forsiraj sada".
+      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
+      // Rezultat: link kad gotovo (+ Magisterium HR/EN one-click); inače prioritet/greška.
       var res;
-      if (j.detail_url) res = '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>';
+      if (j.detail_url) res = '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'+(magBtns(j)?'<div style="display:flex;gap:.3rem;margin-top:.35rem;flex-wrap:wrap;">'+magBtns(j)+'</div>':'');
       else if (j.state==='queued' && !j.priority) res = '<button class="pillbtn prio-btn" data-prio="'+esc(j.id)+'" title="Obradi odmah preko Modala — naplati razliku (2 kredita)">⚡ Forsiraj sada</button>';
       else if (j.state==='failed' && j.error) res = '<span class="dim">'+esc(j.error).slice(0,80)+'</span>';
       else res = '<span class="dim">—</span>';
@@ -261,10 +297,12 @@ document.getElementById('addform').addEventListener('submit', async function(e){
 });
 
 document.getElementById('rows').addEventListener('click', function(e){
+  var mb = e.target.closest('button.mag-btn');
+  if (mb) { runMagisterium(mb.dataset.mag, mb.dataset.lang); return; }
   var pb = e.target.closest('button.prio-btn');
   if (pb) { prioritize(pb.dataset.prio); return; }
   var tog = e.target.closest('button.pillbtn');
-  if (tog) toggleSteps(tog.dataset.jobid);
+  if (tog && tog.dataset.jobid) toggleSteps(tog.dataset.jobid);
 });
 refresh();
 setInterval(refresh, 10000);

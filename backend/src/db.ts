@@ -2,11 +2,13 @@ import type { ApiKeyRow, JobRow, JobState, MagisteriumJobRow } from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, with_magisterium, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
+  'id, youtube_id, youtube_url, source_platform, source_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, with_magisterium, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
 
 export interface CreateJobInput {
   youtubeId: string;
   youtubeUrl: string;
+  sourcePlatform?: string; // 'youtube' (default) | 'x'
+  sourceUrl?: string | null; // kanonski originalni URL (default = youtubeUrl)
   title?: string | null;
   channel?: string | null;
   source?: string;
@@ -51,6 +53,8 @@ export async function findJobByYoutubeIdForKey(
 export interface CreateImportedJobInput {
   youtubeId: string;
   youtubeUrl: string;
+  sourcePlatform?: string; // 'youtube' (default) | 'x'
+  sourceUrl?: string | null; // kanonski originalni URL (default = youtubeUrl)
   title?: string | null;
   channel?: string | null;
   apiKeyId: string;
@@ -69,13 +73,15 @@ export async function createImportedJob(
   const ts = nowSec();
   await db
     .prepare(
-      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, detail_url, price_cents, paid, attempts, created_at, updated_at, done_at)
-       VALUES (?, ?, ?, ?, ?, 'import', ?, 'done', 'unlisted', ?, 0, 0, 0, ?, ?, ?)`,
+      `INSERT INTO jobs (id, youtube_id, youtube_url, source_platform, source_url, title, channel, source, api_key_id, state, visibility, detail_url, price_cents, paid, attempts, created_at, updated_at, done_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'import', ?, 'done', 'unlisted', ?, 0, 0, 0, ?, ?, ?)`,
     )
     .bind(
       id,
       input.youtubeId,
       input.youtubeUrl,
+      input.sourcePlatform ?? 'youtube',
+      input.sourceUrl ?? input.youtubeUrl,
       input.title ?? null,
       input.channel ?? null,
       input.apiKeyId,
@@ -93,13 +99,15 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
   const ts = nowSec();
   await db
     .prepare(
-      `INSERT INTO jobs (id, youtube_id, youtube_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, 0, ?, ?)`,
+      `INSERT INTO jobs (id, youtube_id, youtube_url, source_platform, source_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, 0, ?, ?)`,
     )
     .bind(
       id,
       input.youtubeId,
       input.youtubeUrl,
+      input.sourcePlatform ?? 'youtube',
+      input.sourceUrl ?? input.youtubeUrl,
       input.title ?? null,
       input.channel ?? null,
       input.source ?? 'admin',

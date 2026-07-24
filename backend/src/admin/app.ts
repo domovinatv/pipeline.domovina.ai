@@ -21,7 +21,7 @@ import {
   softDeleteJob,
   updateJob,
 } from '../db';
-import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
+import { extractSourceRef, fetchOEmbed } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
 import { layout, renderAlreadyPublishedPage, renderJobsPage, renderKeysPage } from './views';
 
@@ -52,16 +52,17 @@ admin.post('/jobs', async (c) => {
   // Magisterium checkbox: `mag_present` hidden polje označava da forma nosi checkbox (unchecked
   // checkbox ne šalje ništa). Bez tog polja (stari/programatski POST) → default UKLJUČENO.
   const withMagisterium = String(form.mag_present ?? '') === '1' ? String(form.with_magisterium ?? '') === '1' : true;
-  const youtubeId = extractYouTubeId(raw);
-  if (!youtubeId) {
+  const ref = await extractSourceRef(raw);
+  if (!ref) {
     return c.html(
       layout(
         'DOMOVINA Pipeline — greška',
-        `<h1>Neispravan unos</h1><p>Ne mogu izvući YouTube ID iz: <span class="mono">${raw.replace(/</g, '&lt;')}</span></p><p><a href="/admin">← natrag</a></p>`,
+        `<h1>Neispravan unos</h1><p>Ne mogu prepoznati YouTube ni X (Twitter) URL iz: <span class="mono">${raw.replace(/</g, '&lt;')}</span></p><p><a href="/admin">← natrag</a></p>`,
       ),
       400,
     );
   }
+  const youtubeId = ref.id;
   // Dedup 1: već postoji aktivan job za isti video u NAŠEM queueu.
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
   if (existing) return c.redirect('/admin', 303);
@@ -80,18 +81,22 @@ admin.post('/jobs', async (c) => {
           rawUrl: raw,
           title,
           withMagisterium,
+          source: ref.source,
         }),
       );
     }
   }
 
-  const meta = await fetchOEmbed(youtubeId); // public → naslov+kanal; unlisted → null
+  // oEmbed radi samo za YouTube; za X bridge backfilla naslov/kanal iz info.json.
+  const meta = ref.source === 'youtube' ? await fetchOEmbed(youtubeId) : null;
   await createJob(c.env.DB, {
     youtubeId,
-    youtubeUrl: watchUrl(youtubeId),
+    youtubeUrl: ref.url,
+    sourcePlatform: ref.source,
+    sourceUrl: ref.url,
     title: title || meta?.title || null,
     channel: meta?.channel ?? null,
-    source: 'admin',
+    source: ref.source === 'x' ? 'x-admin' : 'admin',
     priceCents: 0,
     priority,
     creditCost: priority ? 3 : 1,

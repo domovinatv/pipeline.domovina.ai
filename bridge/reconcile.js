@@ -50,6 +50,27 @@ function hasDiarizedLocally(youtubeId) {
   }
 }
 
+// Naslov/kanal/trajanje iz info.json (_unlisted). Isti izvor kao priority_poller.readMeta,
+// ali ovdje kao SIGURNOSNA backfill mreža: kad job ide fetching→done direktno (npr. članak
+// je već bio live pa preskoči transcribing PATCH poller-a), naslov inače ostane null.
+// Za X `channel` ne postoji u info.json-u (yt-dlp twitter daje samo `uploader`) → fallback.
+function readMeta(youtubeId) {
+  try {
+    const f = fs
+      .readdirSync(UNLISTED_DIR)
+      .find((x) => x.includes('_yt_' + youtubeId) && x.endsWith('.info.json'));
+    if (!f) return null;
+    const j = JSON.parse(fs.readFileSync(path.join(UNLISTED_DIR, f), 'utf-8'));
+    return {
+      title: j.title || j.fulltitle || null,
+      channel: j.channel || j.uploader || null,
+      duration_seconds: Number.isFinite(j.duration) ? Math.round(j.duration) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function articleLive(youtubeId) {
   // GET (ne HEAD) — Cloudflare cache-ira 404 do 4h po točnom URL-u.
   const r = await fetch(`${CDN_BASE}/data/${youtubeId}/article.json`, { method: 'GET' });
@@ -67,11 +88,21 @@ async function articleLive(youtubeId) {
   console.log(`🔎 Reconcile ${jobs.length} jobova…`);
   for (const job of jobs) {
     if (await articleLive(job.youtube_id)) {
-      await api('PATCH', `/api/jobs/${job.id}`, {
+      const patch = {
         state: 'done',
         detail_url: `${SITE_BASE}/v/${job.youtube_id}`,
-      });
-      console.log(`  ✅ ${job.youtube_id} → done (${SITE_BASE}/v/${job.youtube_id})`);
+      };
+      // Backfill metapodataka ako fale (job je preskočio poller-ov transcribing PATCH).
+      if (!job.title || !job.channel || !job.duration_seconds) {
+        const meta = readMeta(job.youtube_id);
+        if (meta) {
+          if (!job.title && meta.title) patch.title = meta.title;
+          if (!job.channel && meta.channel) patch.channel = meta.channel;
+          if (!job.duration_seconds && meta.duration_seconds) patch.duration_seconds = meta.duration_seconds;
+        }
+      }
+      await api('PATCH', `/api/jobs/${job.id}`, patch);
+      console.log(`  ✅ ${job.youtube_id} → done (${SITE_BASE}/v/${job.youtube_id})${patch.title ? ' [+naslov]' : ''}`);
     } else if (job.state === 'transcribing' && hasDiarizedLocally(job.youtube_id)) {
       await api('PATCH', `/api/jobs/${job.id}`, { state: 'processing' });
       console.log(`  ⚙️  ${job.youtube_id} → processing (diarizirano, AI lanac u tijeku)`);

@@ -10,7 +10,7 @@ import {
   listJobs,
   updateJob,
 } from '../db';
-import { extractYouTubeId, fetchOEmbed, watchUrl } from '../util';
+import { extractSourceRef, fetchOEmbed } from '../util';
 
 export const jobsApi = new Hono<{ Bindings: Env }>();
 
@@ -29,18 +29,22 @@ jobsApi.post('/', async (c) => {
     youtube_id?: string;
     title?: string;
   };
-  const youtubeId = extractYouTubeId(body.url || body.youtube_id || '');
-  if (!youtubeId) return c.json({ error: 'Neispravan YouTube URL/ID' }, 400);
+  const ref = await extractSourceRef(body.url || body.youtube_id || '');
+  if (!ref) return c.json({ error: 'Neispravan YouTube/X URL/ID' }, 400);
+  const youtubeId = ref.id;
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
   if (existing) return c.json({ job: existing, deduped: true });
   const priceCents = Number(c.env.PRICE_CENTS ?? '0') || 0;
-  const meta = await fetchOEmbed(youtubeId); // public → naslov+kanal; unlisted → null (bridge backfilla)
+  // oEmbed radi samo za YouTube; za X bridge backfilla naslov/kanal iz info.json.
+  const meta = ref.source === 'youtube' ? await fetchOEmbed(youtubeId) : null;
   const job = await createJob(c.env.DB, {
     youtubeId,
-    youtubeUrl: watchUrl(youtubeId),
+    youtubeUrl: ref.url,
+    sourcePlatform: ref.source,
+    sourceUrl: ref.url,
     title: body.title || meta?.title || null,
     channel: meta?.channel ?? null,
-    source: 'api',
+    source: ref.source === 'x' ? 'x-api' : 'api',
     priceCents,
   });
   return c.json({ job }, 201);

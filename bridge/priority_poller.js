@@ -81,10 +81,16 @@ function readMeta(youtubeId) {
   console.log(`⚡ Claimano ${jobs.length} PRIORITETNIH jobova.`);
   for (const job of jobs) {
     console.log(`\n→ ⚡ ${job.youtube_id} (${job.id})`);
+    // Izvor: 'youtube' (default) ili 'x' (X/Twitter). Backend upisuje source='x-admin'/'x-api'
+    // za X postove i minta 11-znakovni youtube_id (sintetički), pa ga OVDJE eksplicitno
+    // prosljeđujemo fetch.js-u preko --unlisted-id (ne izvodi se iz X URL-a). Flagovi
+    // prolaze kroz run_pipeline.sh else-granu (COMMON_ARGS) do fetch.js — kao --unlisted-url.
+    const isX = typeof job.source === 'string' && job.source.startsWith('x');
     // Puni single-video pipeline s Modal transkripcijom (scoped na ovaj youtube_id).
     const args = [
       '--unlisted-url', job.youtube_url,
       ...(job.title ? ['--unlisted-title', job.title] : []),
+      ...(isX ? ['--unlisted-id', job.youtube_id, '--unlisted-source', 'x'] : []),
       '--with-modal-transcribe', '--modal-only', job.youtube_id,
       '--with-local-canary-diarize', '--with-r2-upload',
     ];

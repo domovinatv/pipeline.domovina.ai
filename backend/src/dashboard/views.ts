@@ -64,7 +64,7 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
   <form id="addform">
     <div class="field">
       <label for="url">YouTube URL ili ID</label>
-      <input class="url mono" id="url" name="url" placeholder="https://www.youtube.com/watch?v=… ili -N3jzopLGc4" required autofocus>
+      <input class="url mono" id="url" name="url" placeholder="YouTube (watch?v=… / -N3jzopLGc4) ili X (x.com/…/status/…)" required autofocus>
     </div>
     <div class="field">
       <label for="title">Naslov (opcijski)</label>
@@ -110,7 +110,8 @@ var expandedId = '';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmt(ts){ if(!ts) return ''; return new Date(ts*1000).toLocaleString('hr-HR'); }
-function thumb(id){ return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
+// thumb(j): za X nema ytimg thumbnail (sintetički id) → 𝕏 placeholder; inače ytimg.
+function thumb(j){ if(j && j.source_platform==='x') return '<div class="rthumb" style="display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:#0f1419;background:#E8F5FE;">𝕏</div>'; var id = (j && j.youtube_id!==undefined) ? j.youtube_id : j; return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
 function dur(s){ if(!s) return ''; s=Math.round(s); var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; var p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
 function pill(s){ return '<span class="pill '+s+'">'+s+'</span>'; }
 // Transkripcijski lock: koji backend (modal/colab) drži transkripciju. Prazno bez claima; nestaje na done/failed.
@@ -187,12 +188,16 @@ async function refresh(){
     var data = await r.json();
     if (typeof data.credits_remaining === 'number') document.getElementById('credits').textContent = data.credits_remaining;
     var rows = (data.jobs||[]).map(function(j){
-      var ytUrl = 'https://youtu.be/'+esc(j.youtube_id);
+      // Izvor: X (source_url = originalni X post) ili YouTube. youtube_id je za X
+      // sintetički → NE gradi youtu.be link; koristi source_url iz baze.
+      var isX = j.source_platform === 'x';
+      var srcUrl = j.source_url ? esc(j.source_url) : (isX ? '' : 'https://youtu.be/'+esc(j.youtube_id));
+      var srcTitle = isX ? 'Izvorni X post' : 'Izvorni YouTube video';
       var domUrl = j.detail_url ? esc(j.detail_url) : '';
-      var links = '<a class="mono vlink" href="'+ytUrl+'" target="_blank" rel="noopener" title="Izvorni YouTube video">'+ytUrl+'</a>'
+      var links = (srcUrl ? '<a class="mono vlink" href="'+srcUrl+'" target="_blank" rel="noopener" title="'+srcTitle+'">'+(isX?'𝕏 '+srcUrl:srcUrl)+'</a>' : '')
                 + (domUrl ? '<a class="mono vlink" href="'+domUrl+'" target="_blank" rel="noopener" title="Objavljeno na domovina.ai">'+domUrl+'</a>'
                           : '<span class="mono vlink dim">domovina.ai — čeka objavu</span>');
-      var vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<div class="vlinks">'+links+'</div></div>';
+      var vid = '<div class="vidcell">'+thumb(j)+'<div class="vlinks">'+links+'</div></div>';
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
       var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+priorityBadge(j)+transcribeBadge(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');

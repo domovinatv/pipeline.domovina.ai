@@ -51,6 +51,8 @@ export interface JobRow {
   channel: string | null;
   duration_seconds: number | null;
   source: string;
+  source_platform: string; // 'youtube' | 'x' — izvorna platforma (eksplicitna metadata)
+  source_url: string | null; // kanonski originalni URL (X post / YouTube watch) za linkanje
   api_key_id: string | null;
   state: JobState;
   visibility: string;

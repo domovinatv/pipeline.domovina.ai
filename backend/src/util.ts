@@ -26,6 +26,50 @@ export function watchUrl(youtubeId: string): string {
   return `https://www.youtube.com/watch?v=${youtubeId}`;
 }
 
+// Izvor obrade: YouTube ili X (Twitter). Zajednički oblik za enqueue: 11-znakovni
+// ID (poštuje `_yt_<id>` konvenciju cijelog pipelinea), kanonski URL i oznaka izvora.
+export type SourceKind = 'youtube' | 'x';
+export interface SourceRef {
+  id: string; // uvijek [A-Za-z0-9_-]{11}
+  url: string; // kanonski URL koji ide u fetch.js --unlisted-url
+  source: SourceKind;
+}
+
+// Prepoznaj X/Twitter status URL i vrati kanonski oblik + numerički status ID.
+// Podržava x.com / twitter.com / mobile./www., sa ili bez query stringa.
+function parseXStatus(input: string): { statusId: string; canonical: string } | null {
+  const m = input.match(
+    /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d{5,25})/i,
+  );
+  if (!m) return null;
+  const [, user, statusId] = m;
+  return { statusId, canonical: `https://x.com/${user}/status/${statusId}` };
+}
+
+// Deterministički 11-znakovni sintetički ID iz kanonskog URL-a (Beamly presedan).
+// sha256 → base64url → prvih 11 znakova ∈ [A-Za-z0-9_-]{11}. ~66 bita, praktički
+// bez kolizije. Backend je JEDINI izvor istine za ovaj ID; bridge ga prosljeđuje
+// u fetch.js (--unlisted-id), pa producer NE mora re-hashati.
+export async function synthIdFromUrl(canonicalUrl: string): Promise<string> {
+  const data = new TextEncoder().encode(canonicalUrl);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  const b64url = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return b64url.slice(0, 11);
+}
+
+// Univerzalni ulaz za enqueue: prvo YouTube (backward-compat), zatim X.
+// Vraća null ako ni jedno ne prepozna.
+export async function extractSourceRef(input: string): Promise<SourceRef | null> {
+  const s = (input || '').trim();
+  if (!s) return null;
+  const yt = extractYouTubeId(s);
+  if (yt) return { id: yt, url: watchUrl(yt), source: 'youtube' };
+  const x = parseXStatus(s);
+  if (x) return { id: await synthIdFromUrl(x.canonical), url: x.canonical, source: 'x' };
+  return null;
+}
+
 export function nowSec(): number {
   return Math.floor(Date.now() / 1000);
 }

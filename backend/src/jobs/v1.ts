@@ -13,7 +13,7 @@ import {
   prioritizeJob,
   touchApiKey,
 } from '../db';
-import { extractYouTubeId, fetchOEmbed, sha256Hex, watchUrl } from '../util';
+import { extractSourceRef, fetchOEmbed, sha256Hex } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
 
 // Javni programatski API (SaaS klijenti). Auth = per-key Bearer (≠ bridge INGEST_KEY).
@@ -42,8 +42,9 @@ publicApi.post('/jobs', async (c) => {
     title?: string;
     tier?: string;
   };
-  const youtubeId = extractYouTubeId(body.url || body.youtube_id || '');
-  if (!youtubeId) return c.json({ error: 'Neispravan YouTube URL/ID' }, 400);
+  const ref = await extractSourceRef(body.url || body.youtube_id || '');
+  if (!ref) return c.json({ error: 'Neispravan YouTube/X URL/ID' }, 400);
+  const youtubeId = ref.id;
   // Tier: 'priority' = Modal instant (3 kredita), inače standard (1 kredit, noćni Colab bulk).
   const priority = body.tier === 'priority' ? 1 : 0;
   const cost = priority ? 3 : 1;
@@ -63,10 +64,12 @@ publicApi.post('/jobs', async (c) => {
     // Idempotentno: ako ovaj ključ već ima red za ovaj video, vrati ga (bez duplikata).
     let job = await findJobByYoutubeIdForKey(c.env.DB, youtubeId, key.id);
     if (!job) {
-      const meta = await fetchOEmbed(youtubeId);
+      const meta = ref.source === 'youtube' ? await fetchOEmbed(youtubeId) : null;
       job = await createImportedJob(c.env.DB, {
         youtubeId,
-        youtubeUrl: watchUrl(youtubeId),
+        youtubeUrl: ref.url,
+        sourcePlatform: ref.source,
+        sourceUrl: ref.url,
         title: body.title || meta?.title || null,
         channel: meta?.channel ?? null,
         apiKeyId: key.id,
@@ -88,13 +91,16 @@ publicApi.post('/jobs', async (c) => {
     return c.json({ error: 'Nema dovoljno kredita', credits_remaining: key.credits, required: cost }, 402);
   }
   const priceCents = Number(c.env.PRICE_CENTS ?? '0') || 0;
-  const meta = await fetchOEmbed(youtubeId); // public/unlisted → naslov+kanal; bridge backfilla ostalo
+  // oEmbed radi samo za YouTube; za X bridge backfilla naslov/kanal iz info.json.
+  const meta = ref.source === 'youtube' ? await fetchOEmbed(youtubeId) : null;
   const job = await createJob(c.env.DB, {
     youtubeId,
-    youtubeUrl: watchUrl(youtubeId),
+    youtubeUrl: ref.url,
+    sourcePlatform: ref.source,
+    sourceUrl: ref.url,
     title: body.title || meta?.title || null,
     channel: meta?.channel ?? null,
-    source: 'api',
+    source: ref.source === 'x' ? 'x-api' : 'api',
     apiKeyId: key.id,
     priceCents,
     priority,

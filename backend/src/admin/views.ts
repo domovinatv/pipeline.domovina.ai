@@ -180,6 +180,7 @@ tbody tr:hover { background: #F8FAFC; }
 .pill.src-api { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; text-transform: none; letter-spacing: 0; }
 .pill.src-admin { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 .pill.src-import { background: #F3E8FF; color: #7C3AED; border: 1px solid #E9D5FF; text-transform: none; letter-spacing: 0; }
+.pill.src-x { background: #E8F5FE; color: #0F1419; border: 1px solid #C4E5FB; text-transform: none; letter-spacing: 0; }
 /* Transkripcijski claim/lock: koji backend drži transkripciju (colab batch vs modal GPU) */
 .pill.tb-modal { background: #E7EEF8; color: #1D4ED8; border: 1px solid #C7D7F0; text-transform: none; letter-spacing: 0; }
 .pill.tb-colab { background: #FDF1E0; color: #B45309; border: 1px solid #F5D9A8; text-transform: none; letter-spacing: 0; }
@@ -387,16 +388,22 @@ export function renderAlreadyPublishedPage(opts: {
   rawUrl: string;
   title: string | null;
   withMagisterium?: boolean;
+  source?: 'youtube' | 'x';
 }): string {
   const base = opts.siteBase.replace(/\/$/, '');
   const liveUrl = `${base}/v/${opts.youtubeId}`;
+  // YouTube thumbnail postoji samo za YT; za X preskačemo (nema ekvivalenta po ID-u).
+  const thumb =
+    opts.source === 'x'
+      ? ''
+      : `<img src="https://i.ytimg.com/vi/${escapeHtml(opts.youtubeId)}/mqdefault.jpg" alt="">`;
   const body = `
 <h1>Epizoda je već objavljena na domovina.ai</h1>
 <p>Video <span class="mono">${escapeHtml(opts.youtubeId)}</span> je već prošao pipeline —
 članak i artefakti postoje na CDN-u, pa je epizoda dostupna. Nema je smisla ponovno
 obrađivati (troši resurse i ne mijenja rezultat).</p>
 <div class="ytprev" style="margin:1rem 0;">
-  <img src="https://i.ytimg.com/vi/${escapeHtml(opts.youtubeId)}/mqdefault.jpg" alt="">
+  ${thumb}
   <div class="ytprev-meta">
     <div class="ytprev-title">${escapeHtml(opts.title || opts.youtubeId)}</div>
     <a class="ytprev-link" href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener">▶ otvori na domovina.ai</a>
@@ -440,7 +447,7 @@ ${navTabs('queue')}
   <form method="POST" action="/admin/jobs">
     <div class="field">
       <label for="url">YouTube URL ili ID</label>
-      <input class="url mono" id="url" name="url" placeholder="https://www.youtube.com/watch?v=… ili -N3jzopLGc4" required autofocus>
+      <input class="url mono" id="url" name="url" placeholder="YouTube (watch?v=… / -N3jzopLGc4) ili X (x.com/…/status/…)" required autofocus>
     </div>
     <div class="field">
       <label for="title">Naslov (opcijski)</label>
@@ -553,7 +560,8 @@ ${navTabs('queue')}
 function pill(s){ return '<span class="pill '+s+'">'+s+'</span>'; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmt(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleString('hr-HR'); }
-function thumb(id){ return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
+// thumb(j): za X nema ytimg thumbnail (sintetički id) → 𝕏 placeholder; inače ytimg.
+function thumb(j){ if(j && j.source_platform==='x') return '<div class="rthumb" style="display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:#0f1419;background:#E8F5FE;">𝕏</div>'; var id = (j && j.youtube_id!==undefined) ? j.youtube_id : j; return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
 function dur(s){ if(!s) return ''; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; const p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
 // Akcijski gumb: klasa a-{action} → boja akcije == boja stanja koje proizvodi (vizualna veza).
 function btn(id,action,label,title){ return '<button class="act a-'+action+'" data-id="'+esc(id)+'" data-act="'+action+'"'+(title?' title="'+esc(title)+'"':'')+'>'+label+'</button>'; }
@@ -594,6 +602,8 @@ function actions(j){
 function srcBadge(j){
   if (j.source==='api') return '<span class="pill src-api" title="Predano preko API ključa (dashboard/programatski)">🔑 '+esc(j.api_key_name||'API ključ')+'</span>';
   if (j.source==='admin') return '<span class="pill src-admin" title="Ručno dodano iz /admin">admin</span>';
+  if (j.source==='x-admin') return '<span class="pill src-x" title="X (Twitter) post — ručno dodano iz /admin">𝕏 admin</span>';
+  if (j.source==='x-api') return '<span class="pill src-x" title="X (Twitter) post — predano preko API ključa">𝕏 '+esc(j.api_key_name||'API ključ')+'</span>';
   if (j.source==='bridge') return '<span class="pill neutral" title="Bridge">bridge</span>';
   if (j.source==='import') return '<span class="pill src-import" title="Već objavljeno — uvezeno u listu ključa (nije naplaćeno)">↧ uvezeno'+(j.api_key_name?' · '+esc(j.api_key_name):'')+'</span>';
   return j.source ? '<span class="pill neutral">'+esc(j.source)+'</span>' : '';
@@ -689,7 +699,15 @@ async function refresh(){
       '<div class="stat s-'+s+'"><div class="label">'+s+'</div><div class="value">'+(counts[s]||0)+'</div></div>'
     ).join('');
     const rows = (data.jobs||[]).map(j => {
-      const vid = '<div class="vidcell">'+thumb(j.youtube_id)+'<a class="mono" href="https://youtu.be/'+esc(j.youtube_id)+'" target="_blank" rel="noopener">'+esc(j.youtube_id)+'</a></div>';
+      // Izvor link: X → source_url (originalni post); YouTube → youtu.be. Sintetički
+      // youtube_id se za X NE koristi kao link (nije pravi YT video).
+      const isX = j.source_platform === 'x';
+      const srcHref = j.source_url ? esc(j.source_url) : (isX ? '' : 'https://youtu.be/'+esc(j.youtube_id));
+      const srcLabel = isX ? (j.source_url ? esc(j.source_url) : '𝕏 '+esc(j.youtube_id)) : esc(j.youtube_id);
+      const srcAnchor = srcHref
+        ? '<a class="mono" href="'+srcHref+'" target="_blank" rel="noopener" title="'+(isX?'Izvorni X post':'Izvorni YouTube video')+'">'+(isX?'𝕏 ':'')+srcLabel+'</a>'
+        : '<span class="mono dim">'+srcLabel+'</span>';
+      const vid = '<div class="vidcell">'+thumb(j)+srcAnchor+'</div>';
       const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'

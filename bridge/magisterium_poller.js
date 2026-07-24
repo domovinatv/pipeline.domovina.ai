@@ -24,6 +24,8 @@
  *   FETCH_REPO                 (default sibling ../fetch.domovina.tv)
  *   CDN_BASE                   (default https://cdn.domovina.ai)
  *   CLAUDE_BIN                 (default 'claude' — Claude Code CLI, mora imati Magisterium MCP)
+ *   CLAUDE_MODEL               (default 'opus' — DETERMINISTIČKI model; bez toga CLI uzme zadnje
+ *                               korišteni pa kvaliteta varira Fable/Sonnet/Haiku/Opus)
  *   CLAUDE_PERMISSION_MODE     (default 'bypassPermissions' — headless runbook radi bash/MCP/R2 bez interakcije)
  *   MAG_MAX                    (default 2 — koliko zahtjeva po ticku; chat je rate-limitiran 15/min)
  *   MAG_RUNNER                 ('claude' default | 'manual' = samo ispiši komande, ne pokreći/claimaj)
@@ -38,6 +40,10 @@ const FETCH_REPO = process.env.FETCH_REPO || path.resolve(__dirname, '..', '..',
 const CDN_BASE = (process.env.CDN_BASE || 'https://cdn.domovina.ai').replace(/\/$/, '');
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE || 'bypassPermissions';
+// DETERMINISTIČKI model za Magisterium runbook. Bez ovoga Claude Code CLI koristi
+// ZADNJE korišteni model (može biti Fable/Sonnet/Haiku) → nedeterministična kvaliteta.
+// Magisterium teološka obrada traži Opus. Overridable preko env, ali default = opus.
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'opus';
 const MAG_MAX = parseInt(process.env.MAG_MAX || '2', 10);
 const MAG_RUNNER = process.env.MAG_RUNNER || 'claude';
 const RUN_TIMEOUT_MS = parseInt(process.env.MAG_RUN_TIMEOUT_MS || '3600000', 10);
@@ -82,6 +88,7 @@ function runRunbook(youtubeId, lang) {
   const suffix = lang === 'en' ? ' +EN' : '';
   const prompt = `@docs/MAGISTERIUM_MCP_RUN.md ${youtubeId}${suffix}`;
   const args = ['-p', prompt];
+  if (CLAUDE_MODEL) args.push('--model', CLAUDE_MODEL);
   if (CLAUDE_PERMISSION_MODE) args.push('--permission-mode', CLAUDE_PERMISSION_MODE);
   const r = spawnSync(CLAUDE_BIN, args, {
     cwd: FETCH_REPO,
@@ -102,7 +109,7 @@ function runRunbook(youtubeId, lang) {
     if (!jobs.length) return console.log('📭 Nema queued Magisterium zahtjeva.');
     console.log(`📋 ${jobs.length} queued Magisterium zahtjeva (MAG_RUNNER=manual — pokreni ručno):`);
     for (const j of jobs) {
-      console.log(`  • ${j.youtube_id} [${j.lang}] → cd ${FETCH_REPO} && ${CLAUDE_BIN} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}${j.lang === 'en' ? ' +EN' : ''}"`);
+      console.log(`  • ${j.youtube_id} [${j.lang}] → cd ${FETCH_REPO} && ${CLAUDE_BIN} --model ${CLAUDE_MODEL} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}${j.lang === 'en' ? ' +EN' : ''}"`);
     }
     return;
   }
@@ -123,7 +130,7 @@ function runRunbook(youtubeId, lang) {
     }
 
     // 2) Pokreni runbook headless.
-    console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} -p …) — može potrajati ~14 min…`);
+    console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${CLAUDE_MODEL} -p …) — može potrajati ~14 min…`);
     runRunbook(job.youtube_id, job.lang);
 
     // 3) Verificiraj po CDN-u (izvor istine, ne exit kod).

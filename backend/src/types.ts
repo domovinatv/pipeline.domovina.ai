@@ -76,6 +76,46 @@ export interface JobRow {
   mag_en_state?: string | null; // najnoviji magisterium_jobs.state za (youtube_id,'en')
 }
 
+// ── "Otkriveni videi" (discovered_videos) — dnevna podlista onoga što je nightly povukao.
+// NIJE queue obrade: redak postoji samo da se VIDI. Tek 'promote' iz admina stvara `jobs` redak.
+export const DISCOVERED_STATES = ['new', 'promoted', 'dismissed'] as const;
+export type DiscoveredState = (typeof DISCOVERED_STATES)[number];
+
+// Dokle je video stigao lokalno (bridge računa s diska na svakom nightlyju).
+// Redoslijed = napredak pipelinea; admin ga prikazuje kao badge u podlisti.
+export const DISCOVERED_STAGES = ['fetched', 'wav', 'transcribed', 'diarized', 'article'] as const;
+export type DiscoveredStage = (typeof DISCOVERED_STAGES)[number];
+
+export interface DiscoveredRow {
+  id: string;
+  youtube_id: string;
+  youtube_url: string;
+  title: string | null;
+  channel: string | null;
+  channel_dir: string | null;
+  duration_seconds: number | null;
+  published_at: string | null; // YYYYMMDD
+  batch_date: string; // YYYY-MM-DD — dan otkrića (podlista)
+  stage: string;
+  promotable: number; // 0 = sintetički ID (beamly audio-only) → promote nije moguć
+  source_platform: string; // 'youtube' | 'beamly'
+  state: DiscoveredState;
+  job_id: string | null;
+  created_at: number;
+  updated_at: number;
+  promoted_at: number | null;
+  job_state?: string | null; // popunjava listDiscovered (LEFT JOIN jobs) — stanje promoviranog joba
+}
+
+// Sažetak jedne dnevne podliste (za grupirani prikaz u adminu).
+export interface DiscoveredBatch {
+  batch_date: string;
+  total: number;
+  n_new: number;
+  n_promoted: number;
+  n_dismissed: number;
+}
+
 // Red iz magisterium_jobs — request queue za (re)obradu Magisterium koraka po videu.
 export interface MagisteriumJobRow {
   id: string;

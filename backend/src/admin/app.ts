@@ -4,6 +4,7 @@ import type { Env } from '../types';
 import {
   addApiKeyCredits,
   countByState,
+  countDiscoveredByState,
   countJobs,
   createApiKey,
   createJob,
@@ -11,19 +12,31 @@ import {
   deleteJob,
   enqueueMagisteriumJob,
   findActiveJobByYoutubeId,
+  getDiscovered,
   getJob,
   listApiKeys,
+  listDiscovered,
+  listDiscoveredBatches,
   listJobs,
+  markDiscoveredPromoted,
   prioritizeJob,
   restoreJob,
   setApiKeyEnabled,
+  setDiscoveredState,
   setJobMagisterium,
   softDeleteJob,
   updateJob,
 } from '../db';
+import type { DiscoveredRow } from '../types';
 import { extractSourceRef, fetchOEmbed } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
-import { layout, renderAlreadyPublishedPage, renderJobsPage, renderKeysPage } from './views';
+import {
+  layout,
+  renderAlreadyPublishedPage,
+  renderDiscoveredPage,
+  renderJobsPage,
+  renderKeysPage,
+} from './views';
 
 export const admin = new Hono<{ Bindings: Env }>();
 
@@ -163,6 +176,95 @@ admin.post('/jobs/:id/:action', async (c) => {
       return c.json({ error: `nepoznata akcija: ${action}` }, 400);
   }
   return c.json({ ok: true });
+});
+
+// ───────────────────────── Otkriveni videi (dnevne podliste) ─────────────────────────
+// Zaseban queue od queuea obrade: ovdje su videi koje je nightly SAM povukao. Nitko ih
+// ne obrađuje dok admin ne klikne "⚡ Prioritet" — tek tada nastane pravi `jobs` redak.
+
+admin.get('/discovered', (c) => c.html(renderDiscoveredPage()));
+
+// Promote = jedan klik → puna prioritetna obrada. Stvori `jobs` redak s priority=1 (isti
+// tier kao ⚡ u queueu), pa ga prioritetni poller na Macu pokupi u sljedećem ticku i
+// odvrti puni single-video pipeline (Modal transkripcija → članak → R2 → auto-reuse u kanal).
+async function promoteDiscovered(
+  env: Env,
+  row: DiscoveredRow,
+): Promise<{ ok: boolean; jobId?: string; deduped?: boolean; reason?: string }> {
+  if (row.state !== 'new') return { ok: false, reason: `već ${row.state}` };
+  // Beamly audio-only (sintetički ID) nema pravi YouTube izvor — yt-dlp bi pao. Ne nudi se
+  // u UI-u, ali API put gardiramo i ovdje.
+  if (!row.promotable) return { ok: false, reason: 'nema YouTube izvor (beamly audio-only)' };
+
+  // Dedup: ako za ovaj video već postoji aktivan job (npr. ručno dodan u queue), veži se
+  // na njega umjesto da stvoriš drugi — dva joba za isti video utrkivala bi se na artefaktima.
+  const existing = await findActiveJobByYoutubeId(env.DB, row.youtube_id);
+  if (existing) {
+    await markDiscoveredPromoted(env.DB, row.id, existing.id);
+    return { ok: true, jobId: existing.id, deduped: true };
+  }
+
+  const job = await createJob(env.DB, {
+    youtubeId: row.youtube_id,
+    youtubeUrl: row.youtube_url,
+    sourcePlatform: 'youtube',
+    sourceUrl: row.youtube_url,
+    title: row.title,
+    channel: row.channel,
+    source: 'discovered', // odakle je došao — nightly otkriće, ne ručni unos ni API
+    priceCents: 0,
+    priority: 1,
+    creditCost: 3,
+    withMagisterium: true,
+  });
+  await markDiscoveredPromoted(env.DB, row.id, job.id);
+  return { ok: true, jobId: job.id };
+}
+
+admin.post('/discovered/:id/:action', async (c) => {
+  const row = await getDiscovered(c.env.DB, c.req.param('id'));
+  if (!row) return c.json({ error: 'not found' }, 404);
+  switch (c.req.param('action')) {
+    case 'promote': {
+      const res = await promoteDiscovered(c.env, row);
+      return res.ok ? c.json(res) : c.json({ error: res.reason }, 409);
+    }
+    case 'dismiss':
+      await setDiscoveredState(c.env.DB, row.id, 'dismissed');
+      break;
+    case 'restore':
+      await setDiscoveredState(c.env.DB, row.id, 'new');
+      break;
+    default:
+      return c.json({ error: `nepoznata akcija: ${c.req.param('action')}` }, 400);
+  }
+  return c.json({ ok: true });
+});
+
+// "Pošalji cijelu podlistu" — promovira sve 'new' videe jednog dana. Iza confirm-a u UI-u
+// jer N klikova × Modal run nije besplatno; zato i vraća točan broj poslanih.
+admin.post('/discovered/batch/:date/promote', async (c) => {
+  const batchDate = c.req.param('date');
+  const rows = await listDiscovered(c.env.DB, { batchDate, state: 'new', limit: 500 });
+  let promoted = 0;
+  const skipped: string[] = [];
+  for (const row of rows) {
+    const res = await promoteDiscovered(c.env, row);
+    if (res.ok) promoted++;
+    else skipped.push(row.youtube_id);
+  }
+  return c.json({ ok: true, promoted, skipped });
+});
+
+// JSON za auto-refresh: podliste (dnevni sažetci) + reci, grupirano na klijentu.
+admin.get('/api/discovered', async (c) => {
+  const state = c.req.query('state') || undefined;
+  const [batches, rows, counts] = await Promise.all([
+    listDiscoveredBatches(c.env.DB, 30),
+    listDiscovered(c.env.DB, { state, limit: Number(c.req.query('limit') ?? 300) }),
+    countDiscoveredByState(c.env.DB),
+  ]);
+  return c.json({ batches, discovered: rows, counts });
 });
 
 // ───────────────────────── API ključevi (server-rendered) ─────────────────────────

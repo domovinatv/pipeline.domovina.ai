@@ -1,4 +1,11 @@
-import type { ApiKeyRow, JobRow, JobState, MagisteriumJobRow } from './types';
+import type {
+  ApiKeyRow,
+  DiscoveredBatch,
+  DiscoveredRow,
+  JobRow,
+  JobState,
+  MagisteriumJobRow,
+} from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
@@ -695,4 +702,221 @@ export async function autoEnqueueMagisterium(db: D1Database, cap = 10): Promise<
     if (!deduped) n++;
   }
   return n;
+}
+
+// ───────────────────────── Otkriveni videi (discovered_videos) ─────────────────────────
+const DISC_COLS =
+  'id, youtube_id, youtube_url, title, channel, channel_dir, duration_seconds, published_at, batch_date, stage, promotable, source_platform, state, job_id, created_at, updated_at, promoted_at';
+
+export interface DiscoveredInput {
+  youtubeId: string;
+  youtubeUrl: string;
+  title?: string | null;
+  channel?: string | null;
+  channelDir?: string | null;
+  durationSeconds?: number | null;
+  publishedAt?: string | null; // YYYYMMDD
+  batchDate: string; // YYYY-MM-DD
+  stage?: string;
+  promotable?: boolean;
+  sourcePlatform?: string;
+}
+
+// Upsert jednog otkrivenog videa. Ključ je youtube_id (UNIQUE), pa je nightly idempotentan:
+// ponovni izvještaj istog videa NE stvara duplikat i NE pomiče batch_date (dan otkrića je
+// povijesna činjenica — podlista od 25.07. mora ostati podlista od 25.07.). Osvježava se
+// samo ono što se s vremenom mijenja: stage (napredak na disku) + metapodaci koji su ranije
+// falili. `state`/`job_id` se ovdje NIKAD ne diraju — to je admin domena.
+export async function upsertDiscovered(
+  db: D1Database,
+  input: DiscoveredInput,
+): Promise<{ inserted: boolean }> {
+  const ts = nowSec();
+  // Namjerno SELECT-pa-grana umjesto `ON CONFLICT DO UPDATE`: trebamo pouzdano znati je li
+  // redak NOV (nightly to javlja kao "N novih") — a kod upserta SQLite na UPDATE grani ne
+  // mijenja last_insert_rowid(), pa se iz meta ne može razlikovati insert od updatea.
+  // Batch je nekoliko redaka po noći, pa je dodatni SELECT besplatan.
+  const existing = await db
+    .prepare(`SELECT id FROM discovered_videos WHERE youtube_id = ?`)
+    .bind(input.youtubeId)
+    .first<{ id: string }>();
+
+  if (existing) {
+    // Osvježi samo ono što se s vremenom mijenja: stage (napredak na disku) + metapodaci
+    // koji su ranije falili. batch_date/state/job_id se NE diraju.
+    await db
+      .prepare(
+        `UPDATE discovered_videos SET
+           stage            = ?,
+           title            = COALESCE(title, ?),
+           channel          = COALESCE(channel, ?),
+           channel_dir      = COALESCE(channel_dir, ?),
+           duration_seconds = COALESCE(duration_seconds, ?),
+           published_at     = COALESCE(published_at, ?),
+           updated_at       = ?
+         WHERE id = ?`,
+      )
+      .bind(
+        input.stage ?? 'fetched',
+        input.title ?? null,
+        input.channel ?? null,
+        input.channelDir ?? null,
+        input.durationSeconds ?? null,
+        input.publishedAt ?? null,
+        ts,
+        existing.id,
+      )
+      .run();
+    return { inserted: false };
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO discovered_videos
+         (id, youtube_id, youtube_url, title, channel, channel_dir, duration_seconds, published_at,
+          batch_date, stage, promotable, source_platform, state, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`,
+    )
+    .bind(
+      newId(),
+      input.youtubeId,
+      input.youtubeUrl,
+      input.title ?? null,
+      input.channel ?? null,
+      input.channelDir ?? null,
+      input.durationSeconds ?? null,
+      input.publishedAt ?? null,
+      input.batchDate,
+      input.stage ?? 'fetched',
+      input.promotable === false ? 0 : 1,
+      input.sourcePlatform ?? 'youtube',
+      ts,
+      ts,
+    )
+    .run();
+  return { inserted: true };
+}
+
+export async function getDiscovered(db: D1Database, id: string): Promise<DiscoveredRow | null> {
+  const row = await db
+    .prepare(`SELECT ${DISC_COLS} FROM discovered_videos WHERE id = ?`)
+    .bind(id)
+    .first<DiscoveredRow>();
+  return row ?? null;
+}
+
+export async function findDiscoveredByYoutubeId(
+  db: D1Database,
+  youtubeId: string,
+): Promise<DiscoveredRow | null> {
+  const row = await db
+    .prepare(`SELECT ${DISC_COLS} FROM discovered_videos WHERE youtube_id = ?`)
+    .bind(youtubeId)
+    .first<DiscoveredRow>();
+  return row ?? null;
+}
+
+export interface ListDiscoveredOpts {
+  state?: string; // CSV; default (prazno) = sva stanja
+  batchDate?: string; // ograniči na jednu podlistu
+  limit?: number;
+  offset?: number;
+}
+
+export async function listDiscovered(
+  db: D1Database,
+  opts: ListDiscoveredOpts = {},
+): Promise<DiscoveredRow[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  const offset = Math.max(opts.offset ?? 0, 0);
+  const cond: string[] = [];
+  const binds: unknown[] = [];
+  if (opts.state) {
+    const states = opts.state.split(',').map((s) => s.trim()).filter(Boolean);
+    if (states.length) {
+      cond.push(`d.state IN (${states.map(() => '?').join(',')})`);
+      binds.push(...states);
+    }
+  }
+  if (opts.batchDate) {
+    cond.push('d.batch_date = ?');
+    binds.push(opts.batchDate);
+  }
+  const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+  // LEFT JOIN jobs → stanje promoviranog joba (admin vidi je li klik stvarno krenuo).
+  const cols = DISC_COLS.split(',').map((c) => 'd.' + c.trim()).join(', ');
+  const res = await db
+    .prepare(
+      `SELECT ${cols}, j.state AS job_state
+         FROM discovered_videos d LEFT JOIN jobs j ON j.id = d.job_id
+         ${where}
+         ORDER BY d.batch_date DESC, d.created_at DESC
+         LIMIT ? OFFSET ?`,
+    )
+    .bind(...binds, limit, offset)
+    .all<DiscoveredRow>();
+  return res.results ?? [];
+}
+
+// Sažetak po danu — zaglavlje svake podliste ("25.07. · 2 nova, 1 poslan").
+export async function listDiscoveredBatches(
+  db: D1Database,
+  limit = 30,
+): Promise<DiscoveredBatch[]> {
+  const res = await db
+    .prepare(
+      `SELECT batch_date,
+              COUNT(*) AS total,
+              SUM(CASE WHEN state='new'       THEN 1 ELSE 0 END) AS n_new,
+              SUM(CASE WHEN state='promoted'  THEN 1 ELSE 0 END) AS n_promoted,
+              SUM(CASE WHEN state='dismissed' THEN 1 ELSE 0 END) AS n_dismissed
+         FROM discovered_videos
+        GROUP BY batch_date
+        ORDER BY batch_date DESC
+        LIMIT ?`,
+    )
+    .bind(Math.min(Math.max(limit, 1), 120))
+    .all<DiscoveredBatch>();
+  return res.results ?? [];
+}
+
+export async function countDiscoveredByState(db: D1Database): Promise<Record<string, number>> {
+  const res = await db
+    .prepare(`SELECT state, COUNT(*) AS n FROM discovered_videos GROUP BY state`)
+    .all<{ state: string; n: number }>();
+  const out: Record<string, number> = {};
+  for (const r of res.results ?? []) out[r.state] = r.n;
+  return out;
+}
+
+// Označi otkriveni video promoviranim + zaveži ga za stvoreni job. Guard state='new'
+// (ne diraj već promovirano/odbačeno) → dvostruki klik ne stvara drugi job.
+export async function markDiscoveredPromoted(
+  db: D1Database,
+  id: string,
+  jobId: string,
+): Promise<boolean> {
+  const ts = nowSec();
+  const res = await db
+    .prepare(
+      `UPDATE discovered_videos SET state='promoted', job_id=?, promoted_at=?, updated_at=?
+        WHERE id=? AND state='new'`,
+    )
+    .bind(jobId, ts, ts, id)
+    .run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+// Skloni iz podliste (ne zanima me) / vrati natrag. Ne briše redak — podlista je dnevni
+// zapis pa mora ostati potpuna; 'dismissed' se samo ne prikazuje pod "za odlučiti".
+export async function setDiscoveredState(
+  db: D1Database,
+  id: string,
+  state: 'new' | 'dismissed',
+): Promise<boolean> {
+  const res = await db
+    .prepare(`UPDATE discovered_videos SET state=?, updated_at=? WHERE id=? AND state != 'promoted'`)
+    .bind(state, nowSec(), id)
+    .run();
+  return (res.meta.changes ?? 0) === 1;
 }

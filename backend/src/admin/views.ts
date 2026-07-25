@@ -18,7 +18,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.7.0';
+export const APP_VERSION = 'v0.8.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -181,6 +181,8 @@ tbody tr:hover { background: #F8FAFC; }
 .pill.src-admin { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 .pill.src-import { background: #F3E8FF; color: #7C3AED; border: 1px solid #E9D5FF; text-transform: none; letter-spacing: 0; }
 .pill.src-x { background: #E8F5FE; color: #0F1419; border: 1px solid #C4E5FB; text-transform: none; letter-spacing: 0; }
+/* Promoviran iz noćne podliste otkrivenih videa (/admin/discovered) */
+.pill.src-disc { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; text-transform: none; letter-spacing: 0; }
 /* Transkripcijski claim/lock: koji backend drži transkripciju (colab batch vs modal GPU) */
 .pill.tb-modal { background: #E7EEF8; color: #1D4ED8; border: 1px solid #C7D7F0; text-transform: none; letter-spacing: 0; }
 .pill.tb-colab { background: #FDF1E0; color: #B45309; border: 1px solid #F5D9A8; text-transform: none; letter-spacing: 0; }
@@ -429,11 +431,11 @@ export function statePill(state: string): string {
   return `<span class="pill ${cls}">${state}</span>`;
 }
 
-// Navigacijski tabovi između queue i API-ključeva stranica.
-function navTabs(active: 'queue' | 'keys'): string {
+// Navigacijski tabovi između queue, otkrivenih videa i API-ključeva.
+function navTabs(active: 'queue' | 'discovered' | 'keys'): string {
   const tab = (href: string, id: string, label: string) =>
     `<a class="tab${active === id ? ' active' : ''}" href="${href}">${label}</a>`;
-  return `<nav class="tabs">${tab('/admin', 'queue', 'Queue')}${tab('/admin/keys', 'keys', 'API ključevi')}</nav>`;
+  return `<nav class="tabs">${tab('/admin', 'queue', 'Queue')}${tab('/admin/discovered', 'discovered', '🌙 Otkriveni')}${tab('/admin/keys', 'keys', 'API ključevi')}</nav>`;
 }
 
 // Glavna stranica: stats + forma za dodavanje + tablica (puni se JSON-om na klijentu).
@@ -605,6 +607,7 @@ function srcBadge(j){
   if (j.source==='x-admin') return '<span class="pill src-x" title="X (Twitter) post — ručno dodano iz /admin">𝕏 admin</span>';
   if (j.source==='x-api') return '<span class="pill src-x" title="X (Twitter) post — predano preko API ključa">𝕏 '+esc(j.api_key_name||'API ključ')+'</span>';
   if (j.source==='bridge') return '<span class="pill neutral" title="Bridge">bridge</span>';
+  if (j.source==='discovered') return '<span class="pill src-disc" title="Promoviran iz noćne podliste otkrivenih videa">🌙 otkriveno</span>';
   if (j.source==='import') return '<span class="pill src-import" title="Već objavljeno — uvezeno u listu ključa (nije naplaćeno)">↧ uvezeno'+(j.api_key_name?' · '+esc(j.api_key_name):'')+'</span>';
   return j.source ? '<span class="pill neutral">'+esc(j.source)+'</span>' : '';
 }
@@ -745,6 +748,221 @@ refresh();
 setInterval(refresh, 10000);
 </script>`;
   return layout('DOMOVINA Pipeline — queue', body);
+}
+
+/**
+ * "Otkriveni videi" — dnevne podliste onoga što je nightly SAM povukao.
+ *
+ * Namjerno odvojeno od /admin (queue obrade): ovdje ništa ne radi samo od sebe. Lista je
+ * pregled ("evo što je sinoć stiglo"), a tek klik "⚡ Prioritet" stvori job i pokrene punu
+ * prioritetnu obradu. Grupirano po danu otkrića da se na prvi pogled vidi dnevni priljev.
+ */
+export function renderDiscoveredPage(): string {
+  const body = `
+${navTabs('discovered')}
+<h1>Otkriveni videi</h1>
+<div class="stats" id="stats"></div>
+
+<div class="addbox">
+  <div class="hint" style="margin-top:0;">
+    Ovo su videi koje je <strong>noćni pipeline sam pronašao i skinuo</strong> — po jedna podlista za svaki dan.
+    Ništa se odavde ne obrađuje automatski: standardni put je i dalje Colab batch transkripcija pa noćna AI obrada.
+    Klik na <strong>⚡ Prioritet</strong> stvara job u <a href="/admin">queueu</a> s prioritetom, pa ga poller
+    na Mac Miniju odmah provuče kroz <em>punu</em> obradu (Modal transkripcija → diarizacija → članak → CDN),
+    a <span class="mono">auto_reuse_adhoc</span> gotove artefakte vrati u kanal.
+  </div>
+</div>
+
+<div class="controls">
+  <label for="fState" class="dim">Prikaži:</label>
+  <select id="fState">
+    <option value="new">samo nove (za odlučiti)</option>
+    <option value="">sve</option>
+    <option value="promoted">poslane na obradu</option>
+    <option value="dismissed">sklonjene</option>
+  </select>
+  <span class="spacer"></span>
+  <span class="auto">● auto-refresh 15s</span>
+  <span class="dim" id="updated"></span>
+</div>
+
+<div id="batches"><div class="empty">Učitavam…</div></div>
+
+<style>
+/* Podlista jednog dana: zaglavlje s datumom + brojem + "pošalji sve", pa tablica ispod. */
+.batch { margin-bottom: 1.6rem; }
+.batch-head {
+  display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+  padding: .6rem .9rem; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0; border-bottom: 0; box-shadow: var(--shadow-sm);
+}
+.batch-head .date { font-weight: 800; color: var(--navy); font-size: 1rem; letter-spacing: -.01em; }
+.batch-head .count { font-size: .8rem; color: var(--muted); font-weight: 600; }
+.batch-head .spacer { flex: 1; }
+.batch .table-wrap { border-radius: 0 0 var(--radius) var(--radius); }
+button.act.a-promote { color: #92400E; border-color: #FDE68A; background: #FFFBEB; font-weight: 700; }
+button.act.a-promote:hover { background: #FEF3C7; }
+button.act.a-promote-all { color: #92400E; border-color: #FDE68A; background: #FFFBEB; font-weight: 700; margin: 0; }
+button.act.a-promote-all:hover { background: #FEF3C7; }
+button.act.a-dismiss { color: #5A6570; border-color: #D4D9DE; }
+button.act.a-dismiss:hover { background: #ECEFF2; }
+/* Dokle je video stigao lokalno — badge koji nightly osvježava svake noći. */
+.pill.stage { text-transform: none; letter-spacing: 0; }
+.pill.st-fetched     { background: #ECEFF2; color: #5A6570; border: 1px solid var(--border); }
+.pill.st-wav         { background: #E7EEF8; color: #1D4ED8; border: 1px solid #CDDDF6; }
+.pill.st-transcribed { background: #FDF1E0; color: #B45309; border: 1px solid #F5D9A8; }
+.pill.st-diarized    { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; }
+.pill.st-article     { background: #E0F1E5; color: #2E8540; border: 1px solid #BFE3CC; }
+tr.dismissed td { opacity: .5; }
+tr.dismissed .act { opacity: 1; }
+@media (max-width: 760px) {
+  .batch-head { border-radius: var(--radius-sm); border-bottom: 1px solid var(--border); margin-bottom: .6rem; }
+  .batch .table-wrap { border-radius: 0; }
+  .batch-head .spacer { flex: 1 1 100%; }
+}
+</style>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function dur(s){ if(!s) return ''; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; const p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
+// Datum podliste u ljudskom obliku (bez Date parsiranja — batch_date je već YYYY-MM-DD).
+function humanDate(d){
+  var p = String(d||'').split('-');
+  if (p.length !== 3) return d;
+  return p[2]+'. '+p[1]+'. '+p[0]+'.';
+}
+// Datum epizode iz YYYYMMDD prefiksa basenamea.
+function humanPub(d){
+  var s = String(d||'');
+  if (s.length !== 8) return '';
+  return s.slice(6,8)+'.'+s.slice(4,6)+'.'+s.slice(0,4)+'.';
+}
+var STAGE_LABEL = { fetched:'skinuto', wav:'WAV spreman', transcribed:'transkribirano', diarized:'diarizirano', article:'članak gotov' };
+function stageBadge(st){
+  var s = st || 'fetched';
+  return '<span class="pill stage st-'+esc(s)+'" title="Dokle je video stigao lokalno">'+esc(STAGE_LABEL[s]||s)+'</span>';
+}
+function jobBadge(r){
+  if (r.state !== 'promoted') return '';
+  var js = r.job_state || 'queued';
+  return ' <span class="pill '+esc(js)+'" title="Stanje joba u queueu obrade">⚡ '+esc(js)+'</span>';
+}
+function rowActions(r){
+  if (r.state === 'promoted') {
+    return '<a class="tab" style="padding:.28rem .6rem;font-size:.78rem;" href="/admin?q='+encodeURIComponent(r.youtube_id)+'">↗ vidi u queueu</a>';
+  }
+  var b = [];
+  if (r.state === 'new') {
+    if (r.promotable) {
+      b.push('<button class="act a-promote" data-id="'+esc(r.id)+'" data-act="promote" title="Stvori prioritetni job — puna obrada odmah (Modal)">⚡ Prioritet</button>');
+    } else {
+      b.push('<span class="dim" title="Beamly audio-only (sintetički ID) — nema YouTube izvor za ponovni fetch">bez YT izvora</span>');
+    }
+    b.push('<button class="act a-dismiss" data-id="'+esc(r.id)+'" data-act="dismiss" title="Skloni iz liste za odlučiti">✕ Skloni</button>');
+  } else if (r.state === 'dismissed') {
+    b.push('<button class="act a-requeue" data-id="'+esc(r.id)+'" data-act="restore">↩ Vrati</button>');
+  }
+  return b.join('');
+}
+// Thumbnail se veže na promotable, NE na source_platform: beamly epizoda koja je matchana
+// na YouTube ima pravi ID (i pravi ytimg thumbnail). Samo nematchani beamly (sintetički ID)
+// dobije 🎧 placeholder — za njega bi ytimg vratio 404 i pokazao slomljenu sliku.
+// NB: bez backtickova u ovom komentaru — cijeli <script> živi u template literalu.
+function thumb(r){
+  if (!r.promotable) return '<div class="rthumb" style="display:flex;align-items:center;justify-content:center;font-size:1.1rem;color:#5A6570;" title="Audio-only (nema YouTube izvor)">🎧</div>';
+  return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(r.youtube_id)+'/mqdefault.jpg">';
+}
+function renderRow(r){
+  var link = r.promotable
+    ? '<a class="mono" href="https://youtu.be/'+esc(r.youtube_id)+'" target="_blank" rel="noopener">'+esc(r.youtube_id)+'</a>'
+    : '<span class="mono dim">'+esc(r.youtube_id)+'</span>';
+  var sub = [r.channel?esc(r.channel):'', r.duration_seconds?dur(r.duration_seconds):'', humanPub(r.published_at)].filter(Boolean).join(' · ');
+  var meta = '<div>'+esc(r.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')
+           + (r.channel_dir?'<div class="sub"><span class="pill neutral mono" style="text-transform:none;letter-spacing:0;">'+esc(r.channel_dir)+'</span></div>':'');
+  return '<tr'+(r.state==='dismissed'?' class="dismissed"':'')+'>'+
+    '<td data-l="Video"><div class="vidcell">'+thumb(r)+link+'</div></td>'+
+    '<td data-l="Naslov">'+meta+'</td>'+
+    '<td data-l="Faza">'+stageBadge(r.stage)+jobBadge(r)+'</td>'+
+    '<td data-l="Akcije">'+rowActions(r)+'</td></tr>';
+}
+function renderBatch(date, rows, summary){
+  var nNew = rows.filter(function(r){ return r.state==='new'; }).length;
+  var promoteAll = nNew > 0
+    ? '<button class="act a-promote-all" data-date="'+esc(date)+'" data-n="'+nNew+'" title="Pošalji sve nove iz ove podliste na prioritetnu obradu">⚡ Pošalji sve ('+nNew+')</button>'
+    : '';
+  var counts = [];
+  if (summary) {
+    if (summary.n_new) counts.push(summary.n_new+' za odlučiti');
+    if (summary.n_promoted) counts.push(summary.n_promoted+' poslano');
+    if (summary.n_dismissed) counts.push(summary.n_dismissed+' sklonjeno');
+  }
+  return '<section class="batch">'+
+    '<div class="batch-head">'+
+      '<span class="date">📅 '+esc(humanDate(date))+'</span>'+
+      '<span class="count">'+rows.length+' '+(rows.length===1?'video':'videa')+(counts.length?' · '+esc(counts.join(' · ')):'')+'</span>'+
+      '<span class="spacer"></span>'+promoteAll+
+    '</div>'+
+    '<div class="table-wrap"><table><thead><tr>'+
+      '<th>Video</th><th>Naslov</th><th>Faza</th><th>Akcije</th>'+
+    '</tr></thead><tbody>'+rows.map(renderRow).join('')+'</tbody></table></div>'+
+  '</section>';
+}
+
+var pState = 'new';
+async function act(id, action){
+  try {
+    var r = await fetch('/admin/discovered/'+id+'/'+action, { method:'POST' });
+    if (!r.ok) { var j = await r.json().catch(function(){ return {}; }); alert('Nije uspjelo: '+(j.error||r.status)); }
+  } catch(e) { alert('Mrežna greška.'); }
+  refresh();
+}
+async function promoteAll(date, n){
+  if (!confirm('Poslati svih '+n+' videa od '+humanDate(date)+' na PUNU prioritetnu obradu?\\n\\nSvaki ide kroz Modal GPU transkripciju + Gemini članak.')) return;
+  try {
+    var r = await fetch('/admin/discovered/batch/'+encodeURIComponent(date)+'/promote', { method:'POST' });
+    var j = await r.json().catch(function(){ return {}; });
+    if (j && typeof j.promoted === 'number') alert('Poslano: '+j.promoted+(j.skipped && j.skipped.length ? ' · preskočeno: '+j.skipped.length : ''));
+  } catch(e) { alert('Mrežna greška.'); }
+  refresh();
+}
+async function refresh(){
+  try {
+    var qs = pState ? ('?state='+encodeURIComponent(pState)) : '';
+    var r = await fetch('/admin/api/discovered'+qs, { headers: { 'accept':'application/json' } });
+    if (!r.ok) return;
+    var data = await r.json();
+    var counts = data.counts || {};
+    var order = [['new','za odlučiti'],['promoted','poslano'],['dismissed','sklonjeno']];
+    document.getElementById('stats').innerHTML = order.map(function(o){
+      var cls = o[0]==='new' ? 'queued' : (o[0]==='promoted' ? 'done' : 'skipped');
+      return '<div class="stat s-'+cls+'"><div class="label">'+o[1]+'</div><div class="value">'+(counts[o[0]]||0)+'</div></div>';
+    }).join('');
+    // Grupiraj po batch_date (već sortirano DESC iz baze — Map čuva redoslijed umetanja).
+    var groups = new Map();
+    (data.discovered||[]).forEach(function(r){
+      if (!groups.has(r.batch_date)) groups.set(r.batch_date, []);
+      groups.get(r.batch_date).push(r);
+    });
+    var summaries = {};
+    (data.batches||[]).forEach(function(b){ summaries[b.batch_date] = b; });
+    var html = '';
+    groups.forEach(function(rows, date){ html += renderBatch(date, rows, summaries[date]); });
+    document.getElementById('batches').innerHTML = html ||
+      '<div class="empty">Nema otkrivenih videa'+(pState?' u ovom filteru':'')+'. Nightly ih upisuje na kraju svakog runa.</div>';
+    document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');
+  } catch(e) {}
+}
+document.getElementById('fState').addEventListener('change', function(e){ pState = e.target.value; refresh(); });
+document.getElementById('batches').addEventListener('click', function(e){
+  var all = e.target.closest('button.a-promote-all');
+  if (all) { promoteAll(all.dataset.date, parseInt(all.dataset.n,10)||0); return; }
+  var b = e.target.closest('button.act');
+  if (b && b.dataset.act) { b.classList.add('busy'); act(b.dataset.id, b.dataset.act); }
+});
+refresh();
+setInterval(refresh, 15000);
+</script>`;
+  return layout('DOMOVINA Pipeline — otkriveni videi', body);
 }
 
 // Kratki UTC prikaz vremena za server-rendered tablice (bez klijentskog JS-a).

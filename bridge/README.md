@@ -82,9 +82,36 @@ Idempotentno po `youtube_id`: ponovno pokretanje ne duplicira retke, samo osvje�
 (dokle je video stigao na disku), pa podlista pokazuje živo stanje, a ne samo „stiglo je".
 
 ```bash
-node bridge/report_discovered.js --dry-run            # samo ispiši
-node bridge/report_discovered.js --since 2026-07-18   # backfill starijih podlista
+node bridge/report_discovered.js --dry-run                 # samo ispiši
+node bridge/report_discovered.js --since 2026-07-18        # backfill starijih podlista
+node bridge/report_discovered.js --pending-transcription   # SVE što čeka Colab (ima .wav, nema .canary.srt)
 ```
+
+## Potrošnja tokena — zašto tri filtera
+
+`report_token_usage.js` čita Claude Code session datoteke (`~/.claude/projects/*/*.jsonl`);
+svaka assistant poruka nosi `message.usage`, pa se dobiva stvarna potrošnja headless runova
+bez ijedne izmjene u skriptama koje pozivaju `claude`.
+
+Atribucija videu traži **sva tri** filtera — bilo koji izostavljen daje krive brojke:
+
+1. **samo projekti pipelinea** (default: projekt `FETCH_REPO`-a). Mjereno 2026-07-25:
+   `ecosystem-brain` ima **436** sesija koje spominju video ID-eve a nisu obrada tog videa,
+   naspram 33 stvarne u `fetch.domovina.tv` → skeniranje svega naduvava brojke ~8×.
+   `--all-projects` postoji samo za dijagnostiku.
+2. **`entrypoint === 'sdk-cli'`** — headless `claude -p`. Interaktivne sesije (`cli`) su
+   čovjek za tipkovnicom i nisu trošak obrade videa.
+3. **video ID iz prompta** (`MAGISTERIUM_MCP_RUN.md <VID>` / `_yt_<VID>`); goli 11-znakovni
+   niz se ne prihvaća.
+
+Bez preračuna u dolare — runovi idu pod Claude Code pretplatom, ne per-token naplatom.
+
+```bash
+node bridge/report_token_usage.js --dry-run --top 10
+```
+
+Puni kontekst, izmjerene brojke i zamke:
+`../fetch.domovina.tv/docs/pipeline_observability_2026-07.md`.
 
 `PIPELINE_QUEUE_INGEST_KEY` mora biti u launchd okruženju nightly-ja (ili izvezen u wrapperu).
 

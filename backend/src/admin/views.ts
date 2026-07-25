@@ -18,7 +18,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.8.0';
+export const APP_VERSION = 'v0.9.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -246,6 +246,19 @@ tr.detail-row > td { background: #F8FAFC; padding: .5rem 1rem 1rem; }
 .s-badge.pending { background: var(--card); color: var(--muted); border: 1px solid var(--border); }
 .s-badge.skipped { background: #F3E8FF; color: #7C3AED; }
 .steps-loading { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
+/* ── Vremenska traka obrade: početak / kraj / ukupno (iznad liste koraka) ── */
+.timing { display: flex; gap: .5rem; flex-wrap: wrap; margin: .1rem 0 .55rem; }
+.t-cell { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .4rem .7rem; min-width: 0; }
+.t-label { font-size: .62rem; text-transform: uppercase; letter-spacing: .07em; font-weight: 800; color: var(--faint); }
+.t-val { font-size: .86rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.t-cell.t-total { background: #F0F6FF; border-color: #CDDDF6; }
+.t-cell.t-total .t-val { color: var(--navy); }
+.timing-note { font-size: .72rem; color: var(--muted); margin: 0 0 .8rem; line-height: 1.45; }
+/* Vrijeme objave koraka + Δ od prethodnog koraka */
+.s-time { display: flex; gap: .45rem; align-items: center; margin-top: .18rem; flex-wrap: wrap; }
+.s-when { font-size: .74rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+.s-delta { font-size: .74rem; font-weight: 700; color: #B45309; background: #FDF1E0; border: 1px solid #F5D9A8; border-radius: 999px; padding: .02rem .45rem; white-space: nowrap; }
+.s-delta.reissue { color: var(--muted); background: var(--surface); border-color: var(--border); font-weight: 600; }
 /* Akcijski gumbi: boja akcije == boja stanja koje proizvodi (vizualna veza) */
 button.act.a-skip     { color: #5A6570; border-color: #D4D9DE; }
 button.act.a-skip:hover     { background: #ECEFF2; }
@@ -647,14 +660,63 @@ function detailRow(j){
 }
 function stepBadge(st){ return st==='done'?'gotovo':st==='skipped'?'preskočeno':'čeka'; }
 function stepGlyph(st){ return st==='done'?'✓':st==='skipped'?'–':''; }
-function renderSteps(steps){
+// Trajanje u ljudskom obliku; bira najkrupniju smislenu jedinicu (45s / 12 min / 3h 20min / 6d 4h).
+function fmtDur(sec){
+  if (sec===null || sec===undefined) return '';
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec+'s';
+  var m = Math.floor(sec/60);
+  if (sec < 3600) return m+' min';
+  var h = Math.floor(m/60);
+  if (sec < 86400) return h+'h '+(m%60)+'min';
+  return Math.floor(h/24)+'d '+(h%24)+'h';
+}
+function fmtAt(ts){
+  if (!ts) return '';
+  return new Date(ts*1000).toLocaleString('hr-HR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+// Vremenska traka: kad je ušlo u queue, kad je obrada počela/završila i koliko je ukupno trajala.
+// Kad job timestampova nema (video iz redovnog kanalnog puta), padamo na raspon objave artefakata.
+function renderTiming(t){
+  if (!t) return '';
+  var cells = [];
+  if (t.queued_at)  cells.push(['U queue', fmtAt(t.queued_at), '']);
+  if (t.started_at) cells.push(['Obrada počela', fmtAt(t.started_at), '']);
+  else if (t.first_artifact_at) cells.push(['Prvi artefakt', fmtAt(t.first_artifact_at), '']);
+  if (t.done_at)    cells.push(['Gotovo', fmtAt(t.done_at), '']);
+  else if (t.last_artifact_at) cells.push(['Zadnji artefakt', fmtAt(t.last_artifact_at), '']);
+  if (t.total_seconds !== null && t.total_seconds !== undefined) cells.push(['Ukupno', fmtDur(t.total_seconds), 'total']);
+  // Raspon objave artefakata prikazujemo zasebno kad se bitno razlikuje od "Ukupno" — to je
+  // slučaj videa koji je postojao PRIJE ovog joba (naknadno ubačen u queue), gdje job trajanje
+  // mjeri samo zadnji prolaz, a raspon pokriva cijelu povijest obrade.
+  if (t.artifact_span_seconds !== null && t.artifact_span_seconds !== undefined &&
+      t.artifact_span_seconds !== t.total_seconds && t.artifact_span_seconds > 60) {
+    cells.push(['Raspon artefakata', fmtDur(t.artifact_span_seconds), '']);
+  }
+  if (!cells.length) return '';
+  var strip = '<div class="timing">'+cells.map(function(c){
+    return '<div class="t-cell'+(c[2]==='total'?' t-total':'')+'"><div class="t-label">'+esc(c[0])+'</div><div class="t-val">'+esc(c[1])+'</div></div>';
+  }).join('')+'</div>';
+  return strip+'<div class="timing-note">Vrijeme uz korak je <strong>trenutak objave njegovog artefakta na CDN-u</strong> (Last-Modified), a Δ je razmak do prethodnog koraka — u njega ulazi i čekanje (npr. na Colab batch), ne samo računanje. „Ukupno" dolazi iz joba (claim → gotovo) kad postoji, inače je raspon objave artefakata.</div>';
+}
+function renderSteps(steps, timing){
   if (!steps || !steps.length) return '<div class="steps-loading">Nema podataka o koracima.</div>';
-  return '<ul class="steps">'+steps.map(function(s){
+  return renderTiming(timing)+'<ul class="steps">'+steps.map(function(s){
     var cls = s.state;   // done | pending | skipped
     var link = s.url ? '<a class="s-open" href="'+esc(s.url)+'" target="_blank" rel="noopener" title="Otvori u novom tabu">↗ otvori</a>' : '';
+    // Δ = koliko je prošlo od prethodnog koraka. Negativan razmak (artefakt stariji od
+    // prethodnog) NIJE trajanje nego ponovna objava — označimo ga, ne prikazujemo kao vrijeme.
+    var when = s.at ? '<span class="s-when" title="Objavljeno na CDN-u">'+esc(fmtAt(s.at))+'</span>' : '';
+    var delta = '';
+    if (s.delta_seconds !== null && s.delta_seconds !== undefined) {
+      delta = '<span class="s-delta" title="Od prethodnog koraka (uključuje i čekanje)">+'+esc(fmtDur(s.delta_seconds))+'</span>';
+    } else if (s.out_of_order) {
+      delta = '<span class="s-delta reissue" title="Artefakt je stariji od prethodnog koraka — naknadno ponovno objavljen">↺ ponovna objava</span>';
+    }
+    var time = (when||delta) ? '<div class="s-time">'+when+delta+'</div>' : '';
     return '<li class="is-'+cls+'">'+
       '<span class="dot '+cls+'">'+stepGlyph(s.state)+'</span>'+
-      '<div class="s-main"><div class="s-label">'+esc(s.label)+'</div><div class="s-note">'+esc(s.note)+'</div></div>'+
+      '<div class="s-main"><div class="s-label">'+esc(s.label)+'</div><div class="s-note">'+esc(s.note)+'</div>'+time+'</div>'+
       link+
       '<span class="pill s-badge '+cls+'">'+stepBadge(s.state)+'</span>'+
     '</li>';
@@ -667,7 +729,7 @@ async function loadSteps(id){
     var r = await fetch('/admin/api/jobs/'+id+'/pipeline', { headers: { 'accept':'application/json' } });
     if (!r.ok) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; return; }
     var data = await r.json();
-    host.innerHTML = renderSteps(data.steps);
+    host.innerHTML = renderSteps(data.steps, data.timing);
   } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; }
 }
 function toggleSteps(id){

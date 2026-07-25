@@ -89,27 +89,75 @@ export interface StepStatus {
   state: StepState;
   /** Link na rezultat koraka (CDN artefakt / live stranica); null ako još nema što otvoriti. */
   url: string | null;
+  /** Kad je artefakt objavljen na CDN-u (unix sek, iz Last-Modified); null ako ga nema. */
+  at: number | null;
+  /** Sekunde od prethodnog gotovog koraka — koliko je ovaj korak "trajao". */
+  delta_seconds: number | null;
+  /** Artefakt je stariji od prethodnog koraka (ponovna objava, npr. regeneriran članak). */
+  out_of_order: boolean;
+}
+
+/**
+ * Vremenski okvir obrade.
+ *
+ * Dva su izvora i NAMJERNO se prikazuju odvojeno jer mjere različite stvari:
+ *   • job (D1)   — queued_at/started_at/done_at: kad je job ušao u queue, kad ga je bridge
+ *                  claimao i kad je javljen gotovim. Ovo je pravo trajanje OBRADE.
+ *   • artefakti  — first/last Last-Modified s CDN-a. Ovo je raspon OBJAVE artefakata i
+ *                  pokriva i videe koji nikad nisu prošli kroz queue (redovni kanalni put).
+ * Za multi-pass realnost (fetch → čekanje Colaba → noćna AI obrada) raspon artefakata je
+ * često informativniji od job trajanja, pa se prikazuju oba.
+ */
+export interface PipelineTiming {
+  queued_at: number | null;
+  started_at: number | null;
+  done_at: number | null;
+  /** done_at − started_at (ili raspon artefakata kad job timestampovi fale). */
+  total_seconds: number | null;
+  first_artifact_at: number | null;
+  last_artifact_at: number | null;
+  artifact_span_seconds: number | null;
 }
 
 export interface PipelineReport {
   youtube_id: string;
   state: string;
   detail_url: string | null;
+  timing: PipelineTiming;
   steps: StepStatus[];
+}
+
+export interface ArtifactProbe {
+  present: boolean;
+  /** Unix sekunde iz Last-Modified zaglavlja; null kad ga nema (ili artefakt ne postoji). */
+  at: number | null;
 }
 
 // Probaj jedan artefakt. GET s Range bytes=0-0 (ne HEAD): Cloudflare cache-ira
 // 404 po točnom URL-u, a Range izbjegava povlačenje punog tijela (npr. video_h264.mp4).
-async function artifactExists(cdnBase: string, youtubeId: string, artifact: string): Promise<boolean> {
+// Uz postojanje čitamo i Last-Modified — R2 ga vraća i kroz Cloudflare edge, pa dobivamo
+// vrijeme objave koraka bez ijednog dodatnog zahtjeva.
+async function probeArtifact(
+  cdnBase: string,
+  youtubeId: string,
+  artifact: string,
+): Promise<ArtifactProbe> {
   try {
     const r = await fetch(`${cdnBase}/data/${youtubeId}/${artifact}`, {
       method: 'GET',
       headers: { Range: 'bytes=0-0' },
     });
-    return r.ok || r.status === 206;
+    if (!r.ok && r.status !== 206) return { present: false, at: null };
+    const lm = r.headers.get('last-modified');
+    const ms = lm ? Date.parse(lm) : NaN;
+    return { present: true, at: Number.isFinite(ms) ? Math.floor(ms / 1000) : null };
   } catch {
-    return false;
+    return { present: false, at: null };
   }
+}
+
+async function artifactExists(cdnBase: string, youtubeId: string, artifact: string): Promise<boolean> {
+  return (await probeArtifact(cdnBase, youtubeId, artifact)).present;
 }
 
 /**
@@ -170,18 +218,41 @@ export async function reconcilePublishedJobs(
  */
 export async function buildPipelineReport(
   cdnBase: string,
-  job: { youtube_id: string; state: string; detail_url: string | null; with_magisterium?: number },
+  job: {
+    youtube_id: string;
+    state: string;
+    detail_url: string | null;
+    with_magisterium?: number;
+    created_at?: number | null;
+    claimed_at?: number | null;
+    done_at?: number | null;
+  },
   siteBase?: string,
 ): Promise<PipelineReport> {
   const wantMagisterium = job.with_magisterium !== 0; // undefined/1 → želimo; 0 → admin isključio
   const probes = await Promise.all(
     PIPELINE_STEPS.map((s) =>
-      s.artifact ? artifactExists(cdnBase, job.youtube_id, s.artifact) : Promise.resolve(false),
+      s.artifact
+        ? probeArtifact(cdnBase, job.youtube_id, s.artifact)
+        : Promise.resolve<ArtifactProbe>({ present: false, at: null }),
     ),
   );
 
+  const probeTimes = probes.map((p) => p.at).filter((t): t is number => t !== null);
+  const earliestArtifact = probeTimes.length ? Math.min(...probeTimes) : null;
+
+  // Sidro za Δ PRVOG koraka. Job claim je dobro sidro samo ako je job stvarno pokrenuo ovu
+  // obradu — kad je job noviji od najstarijeg artefakta (video je već postojao pa je naknadno
+  // ubačen u queue, npr. promoviran iz otkrivenih ili re-dodan radi regeneracije), mjerenje
+  // "od claima" bi svaki stariji korak lažno proglasilo ponovnom objavom. U tom slučaju prvi
+  // korak nema od čega mjeriti → Δ ostaje null umjesto izmišljene vrijednosti.
+  let prevAt: number | null =
+    job.claimed_at && (earliestArtifact === null || job.claimed_at <= earliestArtifact)
+      ? job.claimed_at
+      : null;
+
   const steps: StepStatus[] = PIPELINE_STEPS.map((s, i) => {
-    const present = probes[i];
+    const { present, at } = probes[i];
     // Optional korak (Magisterium): odsutan artefakt je "čeka" ako je namjera obraditi, inače "preskočeno".
     const state: StepState = present
       ? 'done'
@@ -192,7 +263,31 @@ export async function buildPipelineReport(
         : 'pending';
     // Link nudimo samo kad artefakt stvarno postoji (inače bi 404-ao).
     const url = present && s.artifact ? `${cdnBase}/data/${job.youtube_id}/${s.artifact}` : null;
-    return { key: s.key, label: s.label, note: s.note, optional: !!s.optional, state, url };
+
+    // Δ = koliko je prošlo od prethodnog gotovog koraka. Negativan Δ NIJE greška nego signal
+    // ponovne objave (npr. članak regeneriran Opusom mjesecima nakon Magisteriuma) — tada ga
+    // ne prikazujemo kao trajanje, samo označimo redoslijed. Sidro se pomiče isključivo
+    // naprijed, da jedna re-objava ne pokvari Δ svim koracima iza sebe.
+    let delta: number | null = null;
+    let outOfOrder = false;
+    if (present && at !== null) {
+      if (prevAt !== null) {
+        if (at >= prevAt) delta = at - prevAt;
+        else outOfOrder = true;
+      }
+      if (prevAt === null || at > prevAt) prevAt = at;
+    }
+    return {
+      key: s.key,
+      label: s.label,
+      note: s.note,
+      optional: !!s.optional,
+      state,
+      url,
+      at,
+      delta_seconds: delta,
+      out_of_order: outOfOrder,
+    };
   });
 
   // Završni izvedeni korak: objavljeno na frontendu. Izvor istine je CDN, ne naš
@@ -209,12 +304,39 @@ export async function buildPipelineReport(
     optional: false,
     state: liveDone ? 'done' : 'pending',
     url: liveDone ? liveUrl : null,
+    // Live nije zaseban artefakt — nastaje u trenutku kad članak sleti na CDN.
+    at: steps.find((s) => s.key === 'article')?.at ?? null,
+    delta_seconds: null,
+    out_of_order: false,
   });
+
+  // Raspon objave artefakata (pokriva i videe koji nikad nisu bili u queueu).
+  const times = steps.map((s) => s.at).filter((t): t is number => t !== null);
+  const firstArtifactAt = times.length ? Math.min(...times) : null;
+  const lastArtifactAt = times.length ? Math.max(...times) : null;
+
+  // Ukupno trajanje: primarno job (claimed→done) jer mjeri stvarnu obradu; kad job
+  // timestampova nema (ili job još traje), padni na raspon artefakata.
+  const jobTotal =
+    job.claimed_at && job.done_at && job.done_at >= job.claimed_at
+      ? job.done_at - job.claimed_at
+      : null;
+  const artifactSpan =
+    firstArtifactAt !== null && lastArtifactAt !== null ? lastArtifactAt - firstArtifactAt : null;
 
   return {
     youtube_id: job.youtube_id,
     state: job.state,
     detail_url: job.detail_url,
+    timing: {
+      queued_at: job.created_at ?? null,
+      started_at: job.claimed_at ?? null,
+      done_at: job.done_at ?? null,
+      total_seconds: jobTotal ?? artifactSpan,
+      first_artifact_at: firstArtifactAt,
+      last_artifact_at: lastArtifactAt,
+      artifact_span_seconds: artifactSpan,
+    },
     steps,
   };
 }

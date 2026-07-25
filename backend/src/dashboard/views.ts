@@ -186,13 +186,53 @@ function detailRow(j){
 }
 function stepBadge(st){ return st==='done'?'gotovo':st==='skipped'?'preskočeno':'čeka'; }
 function stepGlyph(st){ return st==='done'?'✓':st==='skipped'?'–':''; }
-function renderSteps(steps){
+// Trajanje u ljudskom obliku (45s / 12 min / 3h 20min / 6d 4h). Isto ponašanje kao u
+// /admin — obje površine čitaju isti timing iz izvještaja, pa ne smiju prikazivati različito.
+// NB: bez backtickova u komentarima — cijeli <script> živi u template literalu.
+function fmtDur(sec){
+  if (sec===null || sec===undefined) return '';
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec+'s';
+  var m = Math.floor(sec/60);
+  if (sec < 3600) return m+' min';
+  var h = Math.floor(m/60);
+  if (sec < 86400) return h+'h '+(m%60)+'min';
+  return Math.floor(h/24)+'d '+(h%24)+'h';
+}
+function fmtAt(ts){
+  if (!ts) return '';
+  return new Date(ts*1000).toLocaleString('hr-HR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+function renderTiming(t){
+  if (!t) return '';
+  var cells = [];
+  if (t.queued_at)  cells.push(['U queue', fmtAt(t.queued_at), '']);
+  if (t.started_at) cells.push(['Obrada počela', fmtAt(t.started_at), '']);
+  else if (t.first_artifact_at) cells.push(['Prvi artefakt', fmtAt(t.first_artifact_at), '']);
+  if (t.done_at)    cells.push(['Gotovo', fmtAt(t.done_at), '']);
+  else if (t.last_artifact_at) cells.push(['Zadnji artefakt', fmtAt(t.last_artifact_at), '']);
+  if (t.total_seconds !== null && t.total_seconds !== undefined) cells.push(['Ukupno', fmtDur(t.total_seconds), 'total']);
+  if (!cells.length) return '';
+  return '<div class="timing">'+cells.map(function(c){
+    return '<div class="t-cell'+(c[2]==='total'?' t-total':'')+'"><div class="t-label">'+esc(c[0])+'</div><div class="t-val">'+esc(c[1])+'</div></div>';
+  }).join('')+'</div>'+
+  '<div class="timing-note">Vrijeme uz korak je trenutak objave njegovog rezultata; Δ je razmak do prethodnog koraka i uključuje čekanje na red, ne samo obradu.</div>';
+}
+function renderSteps(steps, timing){
   if (!steps || !steps.length) return '<div class="steps-loading">Nema podataka o koracima.</div>';
-  return '<ul class="steps">'+steps.map(function(s){
+  return renderTiming(timing)+'<ul class="steps">'+steps.map(function(s){
     var cls = s.state;
     var link = s.url ? '<a class="s-open" href="'+esc(s.url)+'" target="_blank" rel="noopener">↗ otvori</a>' : '';
+    var when = s.at ? '<span class="s-when">'+esc(fmtAt(s.at))+'</span>' : '';
+    var delta = '';
+    if (s.delta_seconds !== null && s.delta_seconds !== undefined) {
+      delta = '<span class="s-delta" title="Od prethodnog koraka">+'+esc(fmtDur(s.delta_seconds))+'</span>';
+    } else if (s.out_of_order) {
+      delta = '<span class="s-delta reissue" title="Rezultat je naknadno ponovno objavljen">↺ ponovna objava</span>';
+    }
+    var time = (when||delta) ? '<div class="s-time">'+when+delta+'</div>' : '';
     return '<li class="is-'+cls+'"><span class="dot '+cls+'">'+stepGlyph(s.state)+'</span>'+
-      '<div class="s-main"><div class="s-label">'+esc(s.label)+'</div><div class="s-note">'+esc(s.note)+'</div></div>'+
+      '<div class="s-main"><div class="s-label">'+esc(s.label)+'</div><div class="s-note">'+esc(s.note)+'</div>'+time+'</div>'+
       link+'<span class="pill s-badge '+cls+'">'+stepBadge(s.state)+'</span></li>';
   }).join('')+'</ul>';
 }
@@ -203,7 +243,7 @@ async function loadSteps(id){
     var r = await fetch('/api/v1/jobs/'+id+'/pipeline', { headers: H });
     if (!r.ok) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; return; }
     var data = await r.json();
-    host.innerHTML = renderSteps(data.steps);
+    host.innerHTML = renderSteps(data.steps, data.timing);
   } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; }
 }
 function toggleSteps(id){

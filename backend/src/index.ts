@@ -7,6 +7,7 @@ import { publicApi } from './jobs/v1';
 import { transcriptionApi } from './transcription/api';
 import { magisteriumApi } from './magisterium/api';
 import { discoveredApi } from './discovered/api';
+import { usageApi } from './usage/api';
 import { autoEnqueueMagisterium, countByState, sweepStuckFetching, sweepStuckTranscribing } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -23,6 +24,7 @@ app.get('/', async (c) => {
     transcription: { claim: 'POST /api/transcription/claim', release: 'POST /api/transcription/release', claims: 'GET /api/transcription/claims', auth: 'Bearer <INGEST_KEY|TRANSCRIBE_KEY>' },
     magisterium: { enqueue: 'POST /api/magisterium', claim: 'POST /api/magisterium/claim', patch: 'PATCH /api/magisterium/:id', list: 'GET /api/magisterium', auth: 'Bearer <INGEST_KEY>' },
     discovered: { ingest: 'POST /api/discovered', list: 'GET /api/discovered', batches: 'GET /api/discovered/batches', admin: '/admin/discovered', auth: 'Bearer <INGEST_KEY>' },
+    usage: { ingest: 'POST /api/usage', list: 'GET /api/usage', auth: 'Bearer <INGEST_KEY>' },
     public_api: { enqueue: 'POST /api/v1/jobs', list: 'GET /api/v1/jobs', status: 'GET /api/v1/jobs/:id', pipeline: 'GET /api/v1/jobs/:id/pipeline', auth: 'Bearer <API ključ>' },
     counts,
   });
@@ -35,6 +37,7 @@ app.route('/api/v1', publicApi);
 app.route('/api/transcription', transcriptionApi);
 app.route('/api/magisterium', magisteriumApi);
 app.route('/api/discovered', discoveredApi);
+app.route('/api/usage', usageApi);
 
 export default {
   fetch: app.fetch,

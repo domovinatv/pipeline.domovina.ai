@@ -14,6 +14,7 @@ import {
   findActiveJobByYoutubeId,
   getDiscovered,
   getJob,
+  getTokenUsage,
   listApiKeys,
   listDiscovered,
   listDiscoveredBatches,
@@ -337,6 +338,11 @@ admin.get('/api/jobs/:id/pipeline', async (c) => {
   const job = await getJob(c.env.DB, c.req.param('id'));
   if (!job) return c.json({ error: 'not found' }, 404);
   const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
-  const report = await buildPipelineReport(cdnBase, job, c.env.SITE_BASE || 'https://domovina.ai');
-  return c.json(report);
+  // Tokeni dolaze iz D1 (nightly ih puni iz Claude Code sesija), a ne iz CDN probe-a — zato
+  // se pripajaju ovdje, a buildPipelineReport ostaje čist "što je na CDN-u" izvještaj.
+  const [report, tokens] = await Promise.all([
+    buildPipelineReport(cdnBase, job, c.env.SITE_BASE || 'https://domovina.ai'),
+    getTokenUsage(c.env.DB, job.youtube_id),
+  ]);
+  return c.json({ ...report, tokens });
 });

@@ -5,6 +5,7 @@ import type {
   JobRow,
   JobState,
   MagisteriumJobRow,
+  TokenUsageRow,
 } from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
@@ -887,6 +888,75 @@ export async function countDiscoveredByState(db: D1Database): Promise<Record<str
   const out: Record<string, number> = {};
   for (const r of res.results ?? []) out[r.state] = r.n;
   return out;
+}
+
+// ───────────────────────── Potrošnja tokena (token_usage) ─────────────────────────
+const TU_COLS =
+  'youtube_id, runs, input_tokens, cache_creation_tokens, cache_read_tokens, output_tokens, models, first_at, last_at, source, updated_at';
+
+export interface TokenUsageInput {
+  youtubeId: string;
+  runs: number;
+  inputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+  models?: string | null;
+  firstAt?: number | null;
+  lastAt?: number | null;
+}
+
+// REPLACE, ne akumulacija: skener svaki put pročita SVE sesije za video i pošalje pune
+// zbrojeve. Zbrajanjem bi se pri svakom noćnom runu isti tokeni brojali ponovno.
+export async function replaceTokenUsage(db: D1Database, input: TokenUsageInput): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO token_usage
+         (youtube_id, runs, input_tokens, cache_creation_tokens, cache_read_tokens, output_tokens, models, first_at, last_at, source, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'claude-code', ?)
+       ON CONFLICT(youtube_id) DO UPDATE SET
+         runs = excluded.runs,
+         input_tokens = excluded.input_tokens,
+         cache_creation_tokens = excluded.cache_creation_tokens,
+         cache_read_tokens = excluded.cache_read_tokens,
+         output_tokens = excluded.output_tokens,
+         models = excluded.models,
+         first_at = excluded.first_at,
+         last_at = excluded.last_at,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(
+      input.youtubeId,
+      input.runs,
+      input.inputTokens,
+      input.cacheCreationTokens,
+      input.cacheReadTokens,
+      input.outputTokens,
+      input.models ?? null,
+      input.firstAt ?? null,
+      input.lastAt ?? null,
+      nowSec(),
+    )
+    .run();
+}
+
+export async function getTokenUsage(
+  db: D1Database,
+  youtubeId: string,
+): Promise<TokenUsageRow | null> {
+  const row = await db
+    .prepare(`SELECT ${TU_COLS} FROM token_usage WHERE youtube_id = ?`)
+    .bind(youtubeId)
+    .first<TokenUsageRow>();
+  return row ?? null;
+}
+
+export async function listTokenUsage(db: D1Database, limit = 100): Promise<TokenUsageRow[]> {
+  const res = await db
+    .prepare(`SELECT ${TU_COLS} FROM token_usage ORDER BY output_tokens DESC LIMIT ?`)
+    .bind(Math.min(Math.max(limit, 1), 500))
+    .all<TokenUsageRow>();
+  return res.results ?? [];
 }
 
 // Označi otkriveni video promoviranim + zaveži ga za stvoreni job. Guard state='new'

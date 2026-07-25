@@ -116,6 +116,21 @@ export interface DiscoveredBatch {
   n_dismissed: number;
 }
 
+// Potrošnja tokena po videu iz Claude Code headless sesija (vidi migrations/0009).
+export interface TokenUsageRow {
+  youtube_id: string;
+  runs: number;
+  input_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  models: string | null;
+  first_at: number | null;
+  last_at: number | null;
+  source: string;
+  updated_at: number;
+}
+
 // Red iz magisterium_jobs — request queue za (re)obradu Magisterium koraka po videu.
 export interface MagisteriumJobRow {
   id: string;

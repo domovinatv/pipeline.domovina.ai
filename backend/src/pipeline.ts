@@ -110,13 +110,25 @@ export interface StepStatus {
  */
 export interface PipelineTiming {
   queued_at: number | null;
+  /** Job prozor: kad ga je bridge claimao i kad je javljen gotovim. */
   started_at: number | null;
   done_at: number | null;
-  /** done_at − started_at (ili raspon artefakata kad job timestampovi fale). */
-  total_seconds: number | null;
+  /** done_at − started_at. SAMO job prozor — ne pokriva korake izvan njega. */
+  job_seconds: number | null;
   first_artifact_at: number | null;
   last_artifact_at: number | null;
-  artifact_span_seconds: number | null;
+  /** Stvarni početak/kraj cijelog lanca (job prozor ∪ raspon artefakata). */
+  start_at: number | null;
+  end_at: number | null;
+  /**
+   * end_at − start_at. Ovo je „Ukupno" u UI-u i JEDINO ono smije biti headline broj.
+   *
+   * Ranije je total bio job prozor (claim→done), pa je znao ispasti MANJI od Δ pojedinog
+   * koraka: Magisterium (KORAK 8.5) trči iz zasebnog `magisterium_jobs` queuea TEK NAKON
+   * što je job već 'done', pa mu Δ pada izvan job prozora („Ukupno 9 min" uz korak „+36 min").
+   * Raspon nad unijom job prozora i svih artefakata drži invarijantu total ≥ svaki Δ.
+   */
+  total_seconds: number | null;
 }
 
 export interface PipelineReport {
@@ -315,14 +327,22 @@ export async function buildPipelineReport(
   const firstArtifactAt = times.length ? Math.min(...times) : null;
   const lastArtifactAt = times.length ? Math.max(...times) : null;
 
-  // Ukupno trajanje: primarno job (claimed→done) jer mjeri stvarnu obradu; kad job
-  // timestampova nema (ili job još traje), padni na raspon artefakata.
-  const jobTotal =
+  const jobSeconds =
     job.claimed_at && job.done_at && job.done_at >= job.claimed_at
       ? job.done_at - job.claimed_at
       : null;
-  const artifactSpan =
-    firstArtifactAt !== null && lastArtifactAt !== null ? lastArtifactAt - firstArtifactAt : null;
+
+  // Početak/kraj cijelog lanca = unija job prozora i raspona artefakata. Koraci koji trče
+  // izvan job prozora (Magisterium iz zasebnog queuea nakon 'done', naknadni H.264 remux…)
+  // time ulaze u ukupno, pa headline broj više ne može biti manji od pojedinog Δ.
+  const startCandidates = [job.claimed_at ?? null, firstArtifactAt].filter(
+    (t): t is number => t !== null,
+  );
+  const endCandidates = [job.done_at ?? null, lastArtifactAt].filter(
+    (t): t is number => t !== null,
+  );
+  const startAt = startCandidates.length ? Math.min(...startCandidates) : null;
+  const endAt = endCandidates.length ? Math.max(...endCandidates) : null;
 
   return {
     youtube_id: job.youtube_id,
@@ -332,10 +352,12 @@ export async function buildPipelineReport(
       queued_at: job.created_at ?? null,
       started_at: job.claimed_at ?? null,
       done_at: job.done_at ?? null,
-      total_seconds: jobTotal ?? artifactSpan,
+      job_seconds: jobSeconds,
       first_artifact_at: firstArtifactAt,
       last_artifact_at: lastArtifactAt,
-      artifact_span_seconds: artifactSpan,
+      start_at: startAt,
+      end_at: endAt,
+      total_seconds: startAt !== null && endAt !== null ? endAt - startAt : null,
     },
     steps,
   };

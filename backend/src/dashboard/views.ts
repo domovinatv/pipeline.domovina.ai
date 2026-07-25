@@ -206,17 +206,15 @@ function fmtAt(ts){
 function renderTiming(t){
   if (!t) return '';
   var cells = [];
-  if (t.queued_at)  cells.push(['U queue', fmtAt(t.queued_at), '']);
-  if (t.started_at) cells.push(['Obrada počela', fmtAt(t.started_at), '']);
-  else if (t.first_artifact_at) cells.push(['Prvi artefakt', fmtAt(t.first_artifact_at), '']);
-  if (t.done_at)    cells.push(['Gotovo', fmtAt(t.done_at), '']);
-  else if (t.last_artifact_at) cells.push(['Zadnji artefakt', fmtAt(t.last_artifact_at), '']);
+  if (t.queued_at) cells.push(['U queue', fmtAt(t.queued_at), '']);
+  if (t.start_at)  cells.push(['Početak', fmtAt(t.start_at), '']);
+  if (t.end_at)    cells.push(['Kraj', fmtAt(t.end_at), '']);
   if (t.total_seconds !== null && t.total_seconds !== undefined) cells.push(['Ukupno', fmtDur(t.total_seconds), 'total']);
   if (!cells.length) return '';
   return '<div class="timing">'+cells.map(function(c){
     return '<div class="t-cell'+(c[2]==='total'?' t-total':'')+'"><div class="t-label">'+esc(c[0])+'</div><div class="t-val">'+esc(c[1])+'</div></div>';
   }).join('')+'</div>'+
-  '<div class="timing-note">Vrijeme uz korak je trenutak objave njegovog rezultata; Δ je razmak do prethodnog koraka i uključuje čekanje na red, ne samo obradu.</div>';
+  '<div class="timing-note">Vrijeme uz korak je trenutak objave njegovog rezultata; Δ je razmak do prethodnog koraka i uključuje čekanje na red, ne samo obradu. „Ukupno" je raspon od prvog do zadnjeg koraka.</div>';
 }
 function renderSteps(steps, timing){
   if (!steps || !steps.length) return '<div class="steps-loading">Nema podataka o koracima.</div>';

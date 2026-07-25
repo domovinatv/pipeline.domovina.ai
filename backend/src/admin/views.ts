@@ -18,7 +18,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.9.0';
+export const APP_VERSION = 'v0.10.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -681,27 +681,56 @@ function renderTiming(t){
   if (!t) return '';
   var cells = [];
   if (t.queued_at)  cells.push(['U queue', fmtAt(t.queued_at), '']);
-  if (t.started_at) cells.push(['Obrada počela', fmtAt(t.started_at), '']);
-  else if (t.first_artifact_at) cells.push(['Prvi artefakt', fmtAt(t.first_artifact_at), '']);
-  if (t.done_at)    cells.push(['Gotovo', fmtAt(t.done_at), '']);
-  else if (t.last_artifact_at) cells.push(['Zadnji artefakt', fmtAt(t.last_artifact_at), '']);
+  if (t.start_at)   cells.push(['Početak', fmtAt(t.start_at), '']);
+  if (t.end_at)     cells.push(['Kraj', fmtAt(t.end_at), '']);
   if (t.total_seconds !== null && t.total_seconds !== undefined) cells.push(['Ukupno', fmtDur(t.total_seconds), 'total']);
-  // Raspon objave artefakata prikazujemo zasebno kad se bitno razlikuje od "Ukupno" — to je
-  // slučaj videa koji je postojao PRIJE ovog joba (naknadno ubačen u queue), gdje job trajanje
-  // mjeri samo zadnji prolaz, a raspon pokriva cijelu povijest obrade.
-  if (t.artifact_span_seconds !== null && t.artifact_span_seconds !== undefined &&
-      t.artifact_span_seconds !== t.total_seconds && t.artifact_span_seconds > 60) {
-    cells.push(['Raspon artefakata', fmtDur(t.artifact_span_seconds), '']);
+  // Job prozor (claim → gotovo) je UŽI od ukupnog kad koraci trče izvan njega — Magisterium
+  // se pokreće tek nakon što je job 'done'. Prikazujemo ga zasebno i samo kad se razlikuje,
+  // da se ne pomiješa s headline brojem (upravo ta zamjena je davala "Ukupno 9 min" uz "+36 min").
+  if (t.job_seconds !== null && t.job_seconds !== undefined && t.job_seconds !== t.total_seconds) {
+    cells.push(['Od toga job', fmtDur(t.job_seconds), '']);
   }
   if (!cells.length) return '';
   var strip = '<div class="timing">'+cells.map(function(c){
     return '<div class="t-cell'+(c[2]==='total'?' t-total':'')+'"><div class="t-label">'+esc(c[0])+'</div><div class="t-val">'+esc(c[1])+'</div></div>';
   }).join('')+'</div>';
-  return strip+'<div class="timing-note">Vrijeme uz korak je <strong>trenutak objave njegovog artefakta na CDN-u</strong> (Last-Modified), a Δ je razmak do prethodnog koraka — u njega ulazi i čekanje (npr. na Colab batch), ne samo računanje. „Ukupno" dolazi iz joba (claim → gotovo) kad postoji, inače je raspon objave artefakata.</div>';
+  return strip+'<div class="timing-note">Vrijeme uz korak je <strong>trenutak objave njegovog artefakta na CDN-u</strong> (Last-Modified), a Δ je razmak do prethodnog koraka — u njega ulazi i čekanje (npr. na Colab batch), ne samo računanje. „Ukupno" je raspon od prvog do zadnjeg koraka; „Od toga job" je uži prozor u kojem je bridge držao job (Magisterium i naknadni koraci trče izvan njega).</div>';
 }
-function renderSteps(steps, timing){
+// Potrošnja tokena iz Claude Code headless sesija za ovaj video (Magisterium MCP runbook,
+// --gemini-backend claude). Namjerno BEZ prikaza u dolarima: ti runovi idu pod pretplatom,
+// ne per-token naplatom, pa bi "$X" implicirao trošak kojeg nema.
+function fmtTok(n){
+  if (!n) return '0';
+  if (n >= 1000000) return (n/1000000).toFixed(n >= 10000000 ? 0 : 1)+'M';
+  if (n >= 1000) return Math.round(n/1000)+'k';
+  return String(n);
+}
+function renderTokens(t){
+  if (!t) return '';
+  var cells = [
+    ['Ulaz', fmtTok(t.input_tokens)],
+    ['Cache upis', fmtTok(t.cache_creation_tokens)],
+    ['Cache čitanje', fmtTok(t.cache_read_tokens)],
+    ['Izlaz', fmtTok(t.output_tokens)],
+  ];
+  var models = t.models ? '<span class="dim"> · '+esc(t.models)+'</span>' : '';
+  return '<div class="steps-head" style="margin-top:1rem;">Potrošnja tokena — Claude Code'+
+      ' <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:600;">('+(t.runs||0)+' '+((t.runs===1)?'headless run':'headless runova')+')</span>'+models+'</div>'+
+    '<div class="timing">'+cells.map(function(c){
+      return '<div class="t-cell"><div class="t-label">'+esc(c[0])+'</div><div class="t-val">'+esc(c[1])+'</div></div>';
+    }).join('')+'</div>'+
+    '<div class="timing-note">Zbroj iz Claude Code session datoteka, samo <strong>headless</strong> runovi pipelinea (Magisterium MCP runbook, <span class="mono">--gemini-backend claude</span>) — interaktivne sesije se ne pripisuju videu. Runovi idu pod Claude Code pretplatom, pa se trošak ne izražava u dolarima.</div>';
+}
+function renderSteps(steps, timing, tokens){
   if (!steps || !steps.length) return '<div class="steps-loading">Nema podataka o koracima.</div>';
-  return renderTiming(timing)+'<ul class="steps">'+steps.map(function(s){
+  return renderTiming(timing)+renderTokensAfter(steps, tokens);
+}
+// Koraci pa tokeni ispod njih (tokeni su dodatak, ne dio lanca koraka).
+function renderTokensAfter(steps, tokens){
+  return renderStepList(steps)+renderTokens(tokens);
+}
+function renderStepList(steps){
+  return '<ul class="steps">'+steps.map(function(s){
     var cls = s.state;   // done | pending | skipped
     var link = s.url ? '<a class="s-open" href="'+esc(s.url)+'" target="_blank" rel="noopener" title="Otvori u novom tabu">↗ otvori</a>' : '';
     // Δ = koliko je prošlo od prethodnog koraka. Negativan razmak (artefakt stariji od
@@ -729,7 +758,7 @@ async function loadSteps(id){
     var r = await fetch('/admin/api/jobs/'+id+'/pipeline', { headers: { 'accept':'application/json' } });
     if (!r.ok) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; return; }
     var data = await r.json();
-    host.innerHTML = renderSteps(data.steps, data.timing);
+    host.innerHTML = renderSteps(data.steps, data.timing, data.tokens);
   } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; }
 }
 function toggleSteps(id){

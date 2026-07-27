@@ -43,7 +43,12 @@ const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE || 'bypassPerm
 // DETERMINISTIČKI model za Magisterium runbook. Bez ovoga Claude Code CLI koristi
 // ZADNJE korišteni model (može biti Fable/Sonnet/Haiku) → nedeterministična kvaliteta.
 // Magisterium teološka obrada traži Opus. Overridable preko env, ali default = opus.
+// Od 2026-07: zahtjev iz queuea može nositi VLASTITI model (job.model, admin ga bira po
+// videu) — tada on pobjeđuje ovaj env default. NULL na zahtjevu → ostaje CLAUDE_MODEL.
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'opus';
+// Modeli koje smijemo proslijediti CLI-ju. Whitelist jer `--model <smeće>` ruši run,
+// a vrijednost dolazi iz baze (drugi servis) — ne vjerujemo joj na slijepo.
+const ALLOWED_MODELS = ['opus', 'sonnet', 'haiku'];
 const MAG_MAX = parseInt(process.env.MAG_MAX || '2', 10);
 const MAG_RUNNER = process.env.MAG_RUNNER || 'claude';
 const RUN_TIMEOUT_MS = parseInt(process.env.MAG_RUN_TIMEOUT_MS || '3600000', 10);
@@ -61,6 +66,15 @@ async function api(method, pathname, body) {
   });
   if (!res.ok) throw new Error(`${method} ${pathname} → ${res.status} ${await res.text()}`);
   return res.json();
+}
+
+// Model za jedan zahtjev: izbor s njega (admin) ako je dozvoljen, inače env/default.
+// Nepoznata vrijednost se NE prosljeđuje — pada na default uz upozorenje, jer bi rušila run.
+function modelFor(job) {
+  if (!job.model) return CLAUDE_MODEL;
+  if (ALLOWED_MODELS.includes(job.model)) return job.model;
+  console.error(`  ⚠️ nepoznat model '${job.model}' na zahtjevu — koristim '${CLAUDE_MODEL}'`);
+  return CLAUDE_MODEL;
 }
 
 // CDN artefakt po jeziku: HR → article.magisterium.json, EN → article.magisterium.en.json.
@@ -84,11 +98,12 @@ async function artifactExists(youtubeId, lang) {
 // Pokreni hibridni Magisterium MCP runbook headless preko Claude Code CLI. EN se traži samo
 // eksplicitno (runbook default = HR-only). Vrati true ako je CLI izašao bez fatalne greške
 // (svejedno se oslanjamo na CDN verifikaciju kao izvor istine, ne na exit kod).
-function runRunbook(youtubeId, lang) {
+function runRunbook(youtubeId, lang, model) {
   const suffix = lang === 'en' ? ' +EN' : '';
   const prompt = `@docs/MAGISTERIUM_MCP_RUN.md ${youtubeId}${suffix}`;
   const args = ['-p', prompt];
-  if (CLAUDE_MODEL) args.push('--model', CLAUDE_MODEL);
+  const useModel = model || CLAUDE_MODEL;
+  if (useModel) args.push('--model', useModel);
   if (CLAUDE_PERMISSION_MODE) args.push('--permission-mode', CLAUDE_PERMISSION_MODE);
   const r = spawnSync(CLAUDE_BIN, args, {
     cwd: FETCH_REPO,
@@ -109,7 +124,7 @@ function runRunbook(youtubeId, lang) {
     if (!jobs.length) return console.log('📭 Nema queued Magisterium zahtjeva.');
     console.log(`📋 ${jobs.length} queued Magisterium zahtjeva (MAG_RUNNER=manual — pokreni ručno):`);
     for (const j of jobs) {
-      console.log(`  • ${j.youtube_id} [${j.lang}] → cd ${FETCH_REPO} && ${CLAUDE_BIN} --model ${CLAUDE_MODEL} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}${j.lang === 'en' ? ' +EN' : ''}"`);
+      console.log(`  • ${j.youtube_id} [${j.lang}] → cd ${FETCH_REPO} && ${CLAUDE_BIN} --model ${modelFor(j)} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}${j.lang === 'en' ? ' +EN' : ''}"`);
     }
     return;
   }
@@ -129,9 +144,10 @@ function runRunbook(youtubeId, lang) {
       continue;
     }
 
-    // 2) Pokreni runbook headless.
-    console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${CLAUDE_MODEL} -p …) — može potrajati ~14 min…`);
-    runRunbook(job.youtube_id, job.lang);
+    // 2) Pokreni runbook headless — modelom koji nosi sam zahtjev (admin izbor po videu).
+    const model = modelFor(job);
+    console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${model} -p …) — može potrajati ~14 min…`);
+    runRunbook(job.youtube_id, job.lang, model);
 
     // 3) Verificiraj po CDN-u (izvor istine, ne exit kod).
     if (await artifactExists(job.youtube_id, job.lang)) {

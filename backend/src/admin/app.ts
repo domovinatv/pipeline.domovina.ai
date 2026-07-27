@@ -24,11 +24,14 @@ import {
   restoreJob,
   setApiKeyEnabled,
   setDiscoveredState,
+  setJobLlmModel,
   setJobMagisterium,
+  setJobMagisteriumModel,
   softDeleteJob,
   updateJob,
 } from '../db';
 import type { DiscoveredRow } from '../types';
+import { parseArticleModel, parseMagisteriumModel } from '../types';
 import { extractSourceRef, fetchOEmbed } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
 import {
@@ -66,6 +69,9 @@ admin.post('/jobs', async (c) => {
   // Magisterium checkbox: `mag_present` hidden polje označava da forma nosi checkbox (unchecked
   // checkbox ne šalje ništa). Bez tog polja (stari/programatski POST) → default UKLJUČENO.
   const withMagisterium = String(form.mag_present ?? '') === '1' ? String(form.with_magisterium ?? '') === '1' : true;
+  // Izbor modela: nepoznata/izostavljena vrijednost → default (vertex / opus), nikad smeće u bazi.
+  const article = parseArticleModel(String(form.article_model ?? ''));
+  const magModel = parseMagisteriumModel(String(form.magisterium_model ?? ''));
   const ref = await extractSourceRef(raw);
   if (!ref) {
     return c.html(
@@ -95,6 +101,8 @@ admin.post('/jobs', async (c) => {
           rawUrl: raw,
           title,
           withMagisterium,
+          articleModel: String(form.article_model ?? ''),
+          magisteriumModel: String(form.magisterium_model ?? ''),
           source: ref.source,
         }),
       );
@@ -115,6 +123,9 @@ admin.post('/jobs', async (c) => {
     priority,
     creditCost: priority ? 3 : 1,
     withMagisterium,
+    llmBackend: article?.backend,
+    llmModel: article?.model,
+    magisteriumModel: magModel,
   });
   return c.redirect('/admin', 303);
 });
@@ -161,6 +172,23 @@ admin.post('/jobs/:id/:action', async (c) => {
     case 'mag-off':
       await setJobMagisterium(c.env.DB, id, false);
       break;
+    case 'llm-model': {
+      // Promjena backenda/modela koraka 7+8 (select u retku; samo dok job nije obrađen).
+      const body = (await c.req.json().catch(() => ({}))) as { value?: string };
+      const article = parseArticleModel(body.value);
+      if (!article) return c.json({ error: `nepoznat model: ${body.value}` }, 400);
+      await setJobLlmModel(c.env.DB, id, article.backend, article.model);
+      break;
+    }
+    case 'mag-model': {
+      // Promjena modela Magisterium runbooka. Vrijedi za SLJEDEĆI zahtjev — već queued/running
+      // zahtjev nosi model koji je razriješen u trenutku enqueuea i ne mijenja se retroaktivno.
+      const body = (await c.req.json().catch(() => ({}))) as { value?: string };
+      const model = parseMagisteriumModel(body.value);
+      if (!model) return c.json({ error: `nepoznat model: ${body.value}` }, 400);
+      await setJobMagisteriumModel(c.env.DB, id, model);
+      break;
+    }
     case 'magisterium-hr':
     case 'magisterium-en': {
       const job = await getJob(c.env.DB, id);
@@ -170,6 +198,7 @@ admin.post('/jobs/:id/:action', async (c) => {
         youtubeId: job.youtube_id,
         lang,
         source: 'admin',
+        model: job.magisterium_model, // namjera s joba; NULL → poller uzme svoj default
       });
       return c.json({ ok: true, magisterium: row, deduped });
     }
@@ -191,6 +220,7 @@ admin.get('/discovered', (c) => c.html(renderDiscoveredPage()));
 async function promoteDiscovered(
   env: Env,
   row: DiscoveredRow,
+  models: { articleModel?: string; magisteriumModel?: string } = {},
 ): Promise<{ ok: boolean; jobId?: string; deduped?: boolean; reason?: string }> {
   if (row.state !== 'new') return { ok: false, reason: `već ${row.state}` };
   // Beamly audio-only (sintetički ID) nema pravi YouTube izvor — yt-dlp bi pao. Ne nudi se
@@ -205,6 +235,7 @@ async function promoteDiscovered(
     return { ok: true, jobId: existing.id, deduped: true };
   }
 
+  const article = parseArticleModel(models.articleModel);
   const job = await createJob(env.DB, {
     youtubeId: row.youtube_id,
     youtubeUrl: row.youtube_url,
@@ -217,6 +248,9 @@ async function promoteDiscovered(
     priority: 1,
     creditCost: 3,
     withMagisterium: true,
+    llmBackend: article?.backend,
+    llmModel: article?.model,
+    magisteriumModel: parseMagisteriumModel(models.magisteriumModel),
   });
   await markDiscoveredPromoted(env.DB, row.id, job.id);
   return { ok: true, jobId: job.id };
@@ -227,7 +261,15 @@ admin.post('/discovered/:id/:action', async (c) => {
   if (!row) return c.json({ error: 'not found' }, 404);
   switch (c.req.param('action')) {
     case 'promote': {
-      const res = await promoteDiscovered(c.env, row);
+      // Modeli dolaze iz selecta u zaglavlju stranice (vrijedi za sve klikove na njoj).
+      const body = (await c.req.json().catch(() => ({}))) as {
+        article_model?: string;
+        magisterium_model?: string;
+      };
+      const res = await promoteDiscovered(c.env, row, {
+        articleModel: body.article_model,
+        magisteriumModel: body.magisterium_model,
+      });
       return res.ok ? c.json(res) : c.json({ error: res.reason }, 409);
     }
     case 'dismiss':
@@ -246,11 +288,16 @@ admin.post('/discovered/:id/:action', async (c) => {
 // jer N klikova × Modal run nije besplatno; zato i vraća točan broj poslanih.
 admin.post('/discovered/batch/:date/promote', async (c) => {
   const batchDate = c.req.param('date');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    article_model?: string;
+    magisterium_model?: string;
+  };
+  const models = { articleModel: body.article_model, magisteriumModel: body.magisterium_model };
   const rows = await listDiscovered(c.env.DB, { batchDate, state: 'new', limit: 500 });
   let promoted = 0;
   const skipped: string[] = [];
   for (const row of rows) {
-    const res = await promoteDiscovered(c.env, row);
+    const res = await promoteDiscovered(c.env, row, models);
     if (res.ok) promoted++;
     else skipped.push(row.youtube_id);
   }

@@ -13,12 +13,46 @@
  */
 
 import type { ApiKeyRow } from '../types';
+import {
+  ARTICLE_MODELS,
+  DEFAULT_ARTICLE_MODEL,
+  DEFAULT_MAGISTERIUM_MODEL,
+  MAGISTERIUM_MODELS,
+} from '../types';
 import { escapeHtml } from '../util';
 
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.10.0';
+export const APP_VERSION = 'v0.11.0';
+
+// <option> lista za izbor modela koraka 7+8. Katalog je jedan (types.ts) — UI ga samo
+// renderira, pa se nova/uklonjena opcija ne mora održavati na dva mjesta.
+function articleModelOptions(selected: string): string {
+  return ARTICLE_MODELS.map(
+    (o) =>
+      `<option value="${escapeHtml(o.value)}"${o.value === selected ? ' selected' : ''}>${escapeHtml(o.label)}</option>`,
+  ).join('');
+}
+
+function magisteriumModelOptions(selected: string): string {
+  const LABEL: Record<string, string> = {
+    opus: 'Claude Opus — default (najviša kvaliteta)',
+    sonnet: 'Claude Sonnet',
+    haiku: 'Claude Haiku',
+  };
+  return MAGISTERIUM_MODELS.map(
+    (m) =>
+      `<option value="${m}"${m === selected ? ' selected' : ''}>${escapeHtml(LABEL[m] ?? m)}</option>`,
+  ).join('');
+}
+
+// Katalog serijaliziran za klijentski JS (selecti u retcima tablice se renderiraju tamo).
+const MODEL_CATALOG_JSON = JSON.stringify({
+  article: ARTICLE_MODELS.map((o) => ({ value: o.value, label: o.label, hint: o.hint })),
+  magisterium: MAGISTERIUM_MODELS,
+  defaults: { article: DEFAULT_ARTICLE_MODEL, magisterium: DEFAULT_MAGISTERIUM_MODEL },
+});
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -142,6 +176,28 @@ h1 { font-size: 1.4rem; font-weight: 800; letter-spacing: -.01em; color: var(--n
 /* Bijeli "+" — emoji ➕ ignorira CSS color (ostaje tamno siv na navy); plain glyph nasljeđuje #fff */
 .addbox button .plus { color: #fff; font-weight: 900; font-size: 1.15em; line-height: 1; }
 .addbox .hint { font-size: .8rem; color: var(--muted); margin-top: .6rem; line-height: 1.45; }
+/* Izbor modela: dva selecta jedan uz drugi (na uskom ekranu se slažu jedan ispod drugog). */
+.modelrow { display: flex; gap: .9rem; flex-wrap: wrap; }
+.modelrow .field { flex: 1 1 18rem; min-width: 0; }
+.addbox select {
+  border: 1px solid var(--border); border-radius: .6rem; padding: .55rem .7rem;
+  font-size: .9rem; font-family: inherit; background: var(--bg); color: var(--ink);
+  width: 100%; cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.addbox select:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
+.modelhint { font-size: .76rem; color: var(--muted); line-height: 1.4; min-height: 1.05rem; }
+.modelhint.warn { color: #92400E; }
+/* Kompaktni select unutar retka tablice (promjena modela na postojećem jobu). */
+select.modelsel {
+  border: 1px solid var(--border); background: var(--card); color: var(--navy);
+  border-radius: .5rem; padding: .24rem .4rem; font-size: .74rem; font-weight: 600;
+  font-family: inherit; cursor: pointer; margin-right: .25rem; margin-bottom: .25rem;
+  max-width: 11rem;
+}
+select.modelsel:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
+select.modelsel.mag { color: #4338CA; border-color: #DDD6FE; }
+/* Badge koji u meta čeliji pokazuje kojim modelom je job konfiguriran. */
+.pill.model { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; text-transform: none; letter-spacing: 0; }
 /* YouTube oEmbed preview (readonly) */
 .ytprev { display: flex; gap: .8rem; align-items: center; margin-top: .8rem; padding: .6rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .ytprev img { width: 120px; height: 68px; object-fit: cover; border-radius: .45rem; flex: none; background: var(--border); }
@@ -403,6 +459,8 @@ export function renderAlreadyPublishedPage(opts: {
   rawUrl: string;
   title: string | null;
   withMagisterium?: boolean;
+  articleModel?: string;
+  magisteriumModel?: string;
   source?: 'youtube' | 'x';
 }): string {
   const base = opts.siteBase.replace(/\/$/, '');
@@ -432,6 +490,8 @@ obrađivati (troši resurse i ne mijenja rezultat).</p>
     <input type="hidden" name="force" value="1">
     <input type="hidden" name="mag_present" value="1">
     ${opts.withMagisterium === false ? '' : '<input type="hidden" name="with_magisterium" value="1">'}
+    <input type="hidden" name="article_model" value="${escapeHtml(opts.articleModel || '')}">
+    <input type="hidden" name="magisterium_model" value="${escapeHtml(opts.magisteriumModel || '')}">
     <button class="act a-requeue" type="submit">Svejedno dodaj u queue (ponovna obrada)</button>
   </form>
 </p>`;
@@ -474,6 +534,19 @@ ${navTabs('queue')}
     <div class="field">
       <input type="hidden" name="mag_present" value="1">
       <label class="tieropt"><input type="checkbox" name="with_magisterium" value="1" checked> 🕊 Magisterium AI (teološko obogaćivanje — KORAK 8.5)</label>
+    </div>
+    <div class="modelrow">
+      <div class="field">
+        <label for="article_model">Model za sažetak + članak (koraci 7+8)</label>
+        <select id="article_model" name="article_model">${articleModelOptions(DEFAULT_ARTICLE_MODEL)}</select>
+        <div class="modelhint" id="article_model_hint"></div>
+        <div class="modelhint warn">⚠ Vrijedi samo za <strong>⚡ prioritetne</strong> jobove — njih poller vrti kao zaseban single-video run. Standardni idu kroz noćni <em>batch</em> koji koracima 7+8 daje jedan globalni backend za sve epizode odjednom.</div>
+      </div>
+      <div class="field">
+        <label for="magisterium_model">Model za Magisterium MCP (korak 8.5)</label>
+        <select id="magisterium_model" name="magisterium_model">${magisteriumModelOptions(DEFAULT_MAGISTERIUM_MODEL)}</select>
+        <div class="modelhint">Runbook ide kroz Claude Code CLI (Magisterium MCP alati) — Gemini ovdje nije opcija.</div>
+      </div>
     </div>
     <button type="submit"><span class="plus">+</span> Dodaj u queue</button>
   </form>
@@ -598,6 +671,64 @@ function magActions(j){
   }
   return b;
 }
+// Katalog modela iz types.ts (jedan izvor istine; ovdje samo renderiranje).
+var MODELS = ${MODEL_CATALOG_JSON};
+var MAG_MODEL_LABEL = { opus:'Opus', sonnet:'Sonnet', haiku:'Haiku' };
+
+// (backend, model) iz baze → vrijednost selecta. Mora pratiti articleModelValue() u types.ts.
+function articleValue(j){
+  var backend = j.llm_backend || 'vertex';
+  var model = j.llm_model || null;
+  var want = model ? (backend+':'+model) : backend;
+  return MODELS.article.some(function(o){ return o.value===want; }) ? want : MODELS.defaults.article;
+}
+// Kratka oznaka modela za badge (bez punog labela — redak je uzak).
+function articleShort(j){
+  var v = articleValue(j);
+  if (v==='vertex') return 'Gemini 3.5 Flash';
+  if (v==='cli') return 'Gemini CLI';
+  return 'Claude ' + (MAG_MODEL_LABEL[v.split(':')[1]] || v.split(':')[1]);
+}
+// Badge u meta čeliji: kojim je modelom job KONFIGURIRAN (7+8 i 8.5). Non-default izbor
+// se ističe naglašeno — default (Gemini + Opus) se ne prikazuje da ne zatrpava redak.
+function modelBadge(j){
+  var out = '';
+  if (articleValue(j) !== MODELS.defaults.article) {
+    out += ' <span class="pill model" title="Model koraka 7+8 (sažetak + članak)">🤖 '+esc(articleShort(j))+'</span>';
+  }
+  var mm = j.magisterium_model;
+  if (mm && mm !== MODELS.defaults.magisterium) {
+    out += ' <span class="pill model" title="Model Magisterium MCP runbooka (korak 8.5)">🕊 '+esc(MAG_MODEL_LABEL[mm]||mm)+'</span>';
+  }
+  return out;
+}
+// Kompaktni select u retku. kind='llm-model' (koraci 7+8) | 'mag-model' (korak 8.5).
+function modelSel(j, kind, opts, current, title, cls){
+  var o = opts.map(function(v){
+    var label = kind==='mag-model' ? ('🕊 '+(MAG_MODEL_LABEL[v.value]||v.value)) : v.label;
+    return '<option value="'+esc(v.value)+'"'+(v.value===current?' selected':'')+'>'+esc(label)+'</option>';
+  }).join('');
+  return '<select class="modelsel'+(cls?' '+cls:'')+'" data-id="'+esc(j.id)+'" data-kind="'+kind+'" title="'+esc(title)+'">'+o+'</select>';
+}
+function modelSelects(j){
+  var b = [];
+  // Koraci 7+8 se mogu mijenjati samo dok članak još nije generiran — nakon 'done'
+  // promjena ne bi ništa pokrenula (ponovna generacija je zaseban put).
+  if (j.state!=='done' && j.state!=='failed') {
+    // Bez ⚡ prioriteta job ide kroz noćni BATCH run (jedan --gemini-backend za sve
+    // epizode odjednom) — per-video izbor tamo nema efekta. Reci to u tooltipu.
+    b.push(modelSel(j, 'llm-model', MODELS.article, articleValue(j),
+      j.priority
+        ? 'Model za sažetak + članak (koraci 7+8)'
+        : 'Model za sažetak + članak — NEMA efekta bez ⚡ prioriteta (noćni batch koristi jedan globalni backend)'));
+  }
+  // Magisterium model vrijedi UVIJEK — na done jobovima ga koriste gumbi 🕊 Mag HR/EN,
+  // na ostalima cron auto-enqueue kad job dođe u done.
+  var magOpts = MODELS.magisterium.map(function(m){ return { value:m, label:m }; });
+  b.push(modelSel(j, 'mag-model', magOpts, j.magisterium_model || MODELS.defaults.magisterium,
+    'Model za Magisterium MCP (korak 8.5) — vrijedi za sljedeći zahtjev', 'mag'));
+  return b.join('');
+}
 function actions(j){
   var b = [];
   if (j.deleted_at) {   // soft-deleted: samo vrati ili trajno obriši
@@ -609,7 +740,7 @@ function actions(j){
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
   b = b.concat(magActions(j));
   b.push(btn(j.id,'delete','✕'));
-  return b.join('');
+  return b.join('') + '<div class="sub">' + modelSelects(j) + '</div>';
 }
 
 // Izvor zahtjeva: badge koji pokazuje TKO je predao job — API ključ (ime, iz
@@ -780,7 +911,22 @@ async function act(id, action){
   try { await fetch('/admin/jobs/'+id+'/'+action, { method:'POST' }); } catch(e) {}
   refresh();
 }
+// Promjena modela na postojećem jobu (select u retku). Vrijednost ide u JSON body —
+// ruta validira protiv kataloga i vraća 400 za nepoznat model.
+async function setModel(id, kind, value){
+  try {
+    const r = await fetch('/admin/jobs/'+id+'/'+kind, {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ value: value })
+    });
+    if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); alert('Nije spremljeno: '+(j.error||r.status)); }
+  } catch(e) { alert('Mrežna greška.'); }
+  refresh();
+}
 async function refresh(){
+  // Auto-refresh prepisuje cijeli <tbody>. Ako je select u retku otvoren/fokusiran,
+  // preskoči tick — inače izbor nestane korisniku ispod prsta usred biranja.
+  var af = document.activeElement;
+  if (af && af.tagName === 'SELECT' && af.closest('#rows')) return;
   try {
     const qs = '?limit='+pLimit+'&offset='+pOffset+(pState?'&state='+encodeURIComponent(pState):'')+(pQ?'&q='+encodeURIComponent(pQ):'');
     const r = await fetch('/admin/api/jobs'+qs, { headers: { 'accept':'application/json' } });
@@ -803,7 +949,7 @@ async function refresh(){
         : '<span class="mono dim">'+srcLabel+'</span>';
       const vid = '<div class="vidcell">'+thumb(j)+srcAnchor+'</div>';
       const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
-      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+'</div>';
+      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+modelBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       // data-l = labela kolone za mobile karticu (CSS ::before)
@@ -835,6 +981,22 @@ document.getElementById('rows').addEventListener('click', function(e){
   const b = e.target.closest('button.act');
   if (b) { b.classList.add('busy'); act(b.dataset.id, b.dataset.act); }
 });
+// Selecti modela u retcima (data-kind = ruta: llm-model | mag-model).
+document.getElementById('rows').addEventListener('change', function(e){
+  const s = e.target.closest('select.modelsel');
+  if (s) { s.blur(); setModel(s.dataset.id, s.dataset.kind, s.value); }
+});
+// Hint ispod selecta u formi za dodavanje — objasni što odabir znači (trošak/kvaliteta).
+(function(){
+  var sel = document.getElementById('article_model'), hint = document.getElementById('article_model_hint');
+  if (!sel || !hint) return;
+  function upd(){
+    var o = MODELS.article.filter(function(x){ return x.value===sel.value; })[0];
+    hint.textContent = o ? o.hint : '';
+  }
+  sel.addEventListener('change', upd);
+  upd();
+})();
 refresh();
 setInterval(refresh, 10000);
 </script>`;
@@ -862,6 +1024,17 @@ ${navTabs('discovered')}
     na Mac Miniju odmah provuče kroz <em>punu</em> obradu (Modal transkripcija → diarizacija → članak → CDN),
     a <span class="mono">auto_reuse_adhoc</span> gotove artefakte vrati u kanal.
   </div>
+  <div class="modelrow" style="margin-top:.9rem;">
+    <div class="field">
+      <label for="dArticleModel">Model za sažetak + članak (koraci 7+8)</label>
+      <select id="dArticleModel">${articleModelOptions(DEFAULT_ARTICLE_MODEL)}</select>
+    </div>
+    <div class="field">
+      <label for="dMagModel">Model za Magisterium MCP (korak 8.5)</label>
+      <select id="dMagModel">${magisteriumModelOptions(DEFAULT_MAGISTERIUM_MODEL)}</select>
+    </div>
+  </div>
+  <div class="hint" style="margin-top:.5rem;">Izbor vrijedi za <strong>sve</strong> ⚡ klikove na ovoj stranici (pojedinačne i „pošalji sve"). Već poslani jobovi zadržavaju model s kojim su stvoreni — mijenja se u <a href="/admin">queueu</a>. Sve odavde ide prioritetno (single-video run), pa se izbor modela za korake 7+8 <strong>uvijek</strong> poštuje.</div>
 </div>
 
 <div class="controls">
@@ -1000,17 +1173,30 @@ function renderBatch(date, rows, summary){
 }
 
 var pState = 'new';
+// Izbor modela iz zaglavlja stranice — ide uz svaki promote (pojedinačni i batch).
+function modelBody(){
+  var a = document.getElementById('dArticleModel'), m = document.getElementById('dMagModel');
+  return { article_model: a ? a.value : undefined, magisterium_model: m ? m.value : undefined };
+}
+function modelLabel(){
+  var a = document.getElementById('dArticleModel');
+  return a ? a.options[a.selectedIndex].text : 'default';
+}
 async function act(id, action){
   try {
-    var r = await fetch('/admin/discovered/'+id+'/'+action, { method:'POST' });
+    var r = await fetch('/admin/discovered/'+id+'/'+action, {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(modelBody())
+    });
     if (!r.ok) { var j = await r.json().catch(function(){ return {}; }); alert('Nije uspjelo: '+(j.error||r.status)); }
   } catch(e) { alert('Mrežna greška.'); }
   refresh();
 }
 async function promoteAll(date, n){
-  if (!confirm('Poslati svih '+n+' videa od '+humanDate(date)+' na PUNU prioritetnu obradu?\\n\\nSvaki ide kroz Modal GPU transkripciju + Gemini članak.')) return;
+  if (!confirm('Poslati svih '+n+' videa od '+humanDate(date)+' na PUNU prioritetnu obradu?\\n\\nSvaki ide kroz Modal GPU transkripciju, a sažetak + članak radi: '+modelLabel())) return;
   try {
-    var r = await fetch('/admin/discovered/batch/'+encodeURIComponent(date)+'/promote', { method:'POST' });
+    var r = await fetch('/admin/discovered/batch/'+encodeURIComponent(date)+'/promote', {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(modelBody())
+    });
     var j = await r.json().catch(function(){ return {}; });
     if (j && typeof j.promoted === 'number') alert('Poslano: '+j.promoted+(j.skipped && j.skipped.length ? ' · preskočeno: '+j.skipped.length : ''));
   } catch(e) { alert('Mrežna greška.'); }

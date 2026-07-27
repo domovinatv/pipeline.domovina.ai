@@ -115,6 +115,42 @@ Puni kontekst, izmjerene brojke i zamke:
 
 `PIPELINE_QUEUE_INGEST_KEY` mora biti u launchd okruženju nightly-ja (ili izvezen u wrapperu).
 
+## Izbor modela po videu (od 0.11.0)
+
+Admin bira model u `/admin` (forma za dodavanje + selecti u retku) i na `/admin/discovered`
+(zaglavlje stranice). Izbor putuje kroz D1 (`jobs.llm_backend`/`llm_model`/`magisterium_model`,
+`magisterium_jobs.model`) do bridgea, koji ga prevede u ono što skripte u `fetch.domovina.tv`
+ionako oduvijek podržavaju. **Bridge je bio jedina karika koja je falila** — mehanika je
+postojala, samo je nitko nije prosljeđivao.
+
+| Korak | Gdje se odlučuje | Što bridge napravi |
+|---|---|---|
+| 7+8 (sažetak + outline + članak) | `jobs.llm_backend` + `llm_model` | `priority_poller.js` doda `--gemini-backend <b>` i postavi `CLAUDE_MODEL` u env `run_pipeline.sh`-a |
+| 8.5 (Magisterium MCP) | `magisterium_jobs.model` (naslijeđen s `jobs.magisterium_model`) | `magisterium_poller.js` pokrene `claude --model <m> -p …` |
+
+Oba mjesta imaju **whitelist** (`LLM_BACKENDS`, `ALLOWED_MODELS`): neispravna vrijednost iz
+baze pada na default uz upozorenje umjesto da sruši run (`--gemini-backend smeće` je fatalna
+validacijska greška, `--model smeće` ruši CLI).
+
+### ⚠ Ograničenje: koraci 7+8 samo na prioritetnim jobovima
+
+Per-video izbor modela za korake 7+8 poštuje **samo `priority_poller.js`**, jer on vrti
+`run_pipeline.sh` kao zaseban single-video run. Standardni jobovi kroz `claim_and_dispatch.js`
+dobiju samo download (`fetch.js --unlisted-url`); sažetak i članak im nastaju u **noćnom batchu**,
+gdje je `run_pipeline.sh` pozvan JEDNOM za sve epizode i ima jedan globalni `--gemini-backend`.
+Tamo per-video izbor nema kamo — admin UI to i piše uz select.
+
+Magisterium (8.5) nema to ograničenje: `magisterium_poller.js` obrađuje zahtjev po zahtjev,
+pa izbor modela vrijedi za **svaki** video, prioritetni ili ne.
+
+### Zašto Fable nije u ponudi
+
+Downstream (channel_index, CDN manifest) dedupa članke po **leksikografski najvećem**
+`_{datum}_{model}.article.json`, a model slug ide u ime datoteke. `opus`/`sonnet`/`haiku`
+počinju slovom > `'g'` pa pri istom datumu pobjeđuju `gemini-*`. `fable` počinje s `'f' < 'g'`
+→ članak bi se uredno generirao, spremio i **nikad servirao**. Dok se to ne popravi uzvodno
+(slug koji sortira iznad `gemini-`), Fable se ne nudi. Vidi `fetch.domovina.tv/generate_article_gemini.js:84-93`.
+
 ## Zašto pull, ne push
 
 Mac Mini je iza NAT-a — Cloudflare ga ne može dosegnuti. Bridge povlači. Claim je

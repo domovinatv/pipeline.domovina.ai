@@ -10,7 +10,7 @@ import type {
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, source_platform, source_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, with_magisterium, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
+  'id, youtube_id, youtube_url, source_platform, source_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, with_magisterium, llm_backend, llm_model, magisterium_model, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
 
 export interface CreateJobInput {
   youtubeId: string;
@@ -25,6 +25,9 @@ export interface CreateJobInput {
   priority?: number; // 0 standard | 1 prioritet
   creditCost?: number; // rezervirani krediti (1 standard, 3 prioritet)
   withMagisterium?: boolean; // default true — želimo li Magisterium (KORAK 8.5) za ovaj video
+  llmBackend?: string; // 'vertex' (default) | 'cli' | 'claude' — backend koraka 7+8
+  llmModel?: string | null; // NULL = default tog backenda; inače 'opus'|'sonnet'|'haiku'
+  magisteriumModel?: string | null; // NULL = 'opus' — model MCP runbooka (korak 8.5)
 }
 
 // Vrati postojeći ne-terminalni job za isti video (idempotencija/dedup), ako postoji.
@@ -107,8 +110,8 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
   const ts = nowSec();
   await db
     .prepare(
-      `INSERT INTO jobs (id, youtube_id, youtube_url, source_platform, source_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, 0, ?, ?)`,
+      `INSERT INTO jobs (id, youtube_id, youtube_url, source_platform, source_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, llm_backend, llm_model, magisterium_model, attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
     )
     .bind(
       id,
@@ -124,6 +127,9 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.priority ?? 0,
       input.creditCost ?? 1,
       input.withMagisterium === false ? 0 : 1,
+      input.llmBackend ?? 'vertex',
+      input.llmModel ?? null,
+      input.magisteriumModel ?? null,
       ts,
       ts,
     )
@@ -572,9 +578,37 @@ export async function setJobMagisterium(db: D1Database, id: string, on: boolean)
     .run();
 }
 
+// Promijeni backend/model koraka 7+8 za jedan job (select u listi). Ima smisla samo dok
+// job nije obrađen — nakon 'done' članak već postoji; ponovna generacija je zaseban put.
+export async function setJobLlmModel(
+  db: D1Database,
+  id: string,
+  backend: string,
+  model: string | null,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE jobs SET llm_backend=?, llm_model=?, updated_at=? WHERE id=?`)
+    .bind(backend, model, nowSec(), id)
+    .run();
+}
+
+// Promijeni model Magisterium runbooka (korak 8.5) za jedan video. Radi u SVIM stanjima:
+// na 'done' jobovima gumbi 🕊 Mag HR/EN pokreću (re)obradu i čitaju upravo ovo, a cron
+// auto-enqueue isto. NULL = 'opus' (default).
+export async function setJobMagisteriumModel(
+  db: D1Database,
+  id: string,
+  model: string | null,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE jobs SET magisterium_model=?, updated_at=? WHERE id=?`)
+    .bind(model, nowSec(), id)
+    .run();
+}
+
 // ───────────────────────── Magisterium (re)obrada queue (magisterium_jobs) ─────────────────────────
 const MAG_COLS =
-  'id, youtube_id, lang, state, source, error, created_at, updated_at, claimed_at, done_at';
+  'id, youtube_id, lang, state, source, model, error, created_at, updated_at, claimed_at, done_at';
 
 export async function getMagisteriumJob(db: D1Database, id: string): Promise<MagisteriumJobRow | null> {
   const row = await db
@@ -589,7 +623,7 @@ export async function getMagisteriumJob(db: D1Database, id: string): Promise<Mag
 // ne stvaraj duplikat (partial unique index idx_mag_jobs_active isto štiti od race-a).
 export async function enqueueMagisteriumJob(
   db: D1Database,
-  input: { youtubeId: string; lang?: string; source?: string },
+  input: { youtubeId: string; lang?: string; source?: string; model?: string | null },
 ): Promise<{ row: MagisteriumJobRow; deduped: boolean }> {
   const lang = input.lang === 'en' ? 'en' : 'hr';
   const existing = await db
@@ -605,10 +639,10 @@ export async function enqueueMagisteriumJob(
   try {
     await db
       .prepare(
-        `INSERT INTO magisterium_jobs (id, youtube_id, lang, state, source, created_at, updated_at)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+        `INSERT INTO magisterium_jobs (id, youtube_id, lang, state, source, model, created_at, updated_at)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
       )
-      .bind(id, input.youtubeId, lang, input.source ?? 'admin', ts, ts)
+      .bind(id, input.youtubeId, lang, input.source ?? 'admin', input.model ?? null, ts, ts)
       .run();
   } catch {
     // Race: drugi zahtjev je upravo ubacio aktivni red (partial unique index) → vrati postojeći.
@@ -690,16 +724,22 @@ export async function listMagisteriumJobs(
 export async function autoEnqueueMagisterium(db: D1Database, cap = 10): Promise<number> {
   const rows = await db
     .prepare(
-      `SELECT j.youtube_id AS youtube_id FROM jobs j
+      `SELECT j.youtube_id AS youtube_id, j.magisterium_model AS magisterium_model FROM jobs j
        WHERE j.state='done' AND j.with_magisterium=1 AND j.deleted_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM magisterium_jobs m WHERE m.youtube_id=j.youtube_id AND m.lang='hr')
        ORDER BY j.updated_at DESC LIMIT ?`,
     )
     .bind(Math.min(Math.max(cap, 1), 25))
-    .all<{ youtube_id: string }>();
+    .all<{ youtube_id: string; magisterium_model: string | null }>();
   let n = 0;
   for (const r of rows.results ?? []) {
-    const { deduped } = await enqueueMagisteriumJob(db, { youtubeId: r.youtube_id, lang: 'hr', source: 'auto' });
+    // Model se naslijedi s joba (namjera po videu); NULL → poller uzme svoj default ('opus').
+    const { deduped } = await enqueueMagisteriumJob(db, {
+      youtubeId: r.youtube_id,
+      lang: 'hr',
+      source: 'auto',
+      model: r.magisterium_model,
+    });
     if (!deduped) n++;
   }
   return n;

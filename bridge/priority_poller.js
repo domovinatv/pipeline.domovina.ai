@@ -29,6 +29,9 @@ const FETCH_REPO = process.env.FETCH_REPO || path.resolve(__dirname, '..', '..',
 const PRIORITY_MAX = parseInt(process.env.PRIORITY_MAX || '3', 10);
 const UNLISTED_DIR = path.join(FETCH_REPO, 'storage', 'output', '_unlisted');
 const RUN_PIPELINE = path.join(FETCH_REPO, 'run_pipeline.sh');
+// Backendi koje run_pipeline.sh prihvaća za korake 7+8 (--gemini-backend). Whitelist, ne
+// prosljeđivanje na slijepo: neispravna vrijednost iz baze bi srušila run na validaciji.
+const LLM_BACKENDS = ['vertex', 'cli', 'claude'];
 
 if (!INGEST_KEY) {
   console.error('❌ PIPELINE_QUEUE_INGEST_KEY nije postavljen — preskačem prioritetni poller.');
@@ -86,6 +89,10 @@ function readMeta(youtubeId) {
     // prosljeđujemo fetch.js-u preko --unlisted-id (ne izvodi se iz X URL-a). Flagovi
     // prolaze kroz run_pipeline.sh else-granu (COMMON_ARGS) do fetch.js — kao --unlisted-url.
     const isX = typeof job.source === 'string' && job.source.startsWith('x');
+    // Izbor modela za korake 7+8 (admin ga postavi po videu). Mehanika je oduvijek u
+    // run_pipeline.sh (--gemini-backend + CLAUDE_MODEL env) — ovdje je samo prevodimo.
+    // Nepoznat/izostavljen backend → 'vertex' (dosadašnje ponašanje).
+    const backend = LLM_BACKENDS.includes(job.llm_backend) ? job.llm_backend : 'vertex';
     // Puni single-video pipeline s Modal transkripcijom (scoped na ovaj youtube_id).
     const args = [
       '--unlisted-url', job.youtube_url,
@@ -93,8 +100,19 @@ function readMeta(youtubeId) {
       ...(isX ? ['--unlisted-id', job.youtube_id, '--unlisted-source', 'x'] : []),
       '--with-modal-transcribe', '--modal-only', job.youtube_id,
       '--with-local-canary-diarize', '--with-r2-upload',
+      // Prosljeđuj samo kad NIJE default — nightly/backfill pozivi ostaju bit-identični.
+      ...(backend !== 'vertex' ? ['--gemini-backend', backend] : []),
     ];
-    spawnSync(RUN_PIPELINE, args, { cwd: FETCH_REPO, stdio: 'inherit' });
+    // CLAUDE_MODEL čitaju summarize_gemini.js i generate_article_gemini.js (env > gemini.conf >
+    // 'opus'). Postavlja se SAMO za claude backend — inače je varijabla no-op, ali bi zbunjivala.
+    // NB: ne diramo ANTHROPIC_API_KEY; ako je postavljen, run_pipeline.sh već upozori da bi
+    // claude CLI mogao naplaćivati per-token umjesto da koristi pretplatu.
+    const env = { ...process.env };
+    if (backend === 'claude' && job.llm_model) env.CLAUDE_MODEL = job.llm_model;
+    if (backend !== 'vertex') {
+      console.log(`  🤖 koraci 7+8: --gemini-backend ${backend}${env.CLAUDE_MODEL ? ' (CLAUDE_MODEL=' + env.CLAUDE_MODEL + ')' : ''}`);
+    }
+    spawnSync(RUN_PIPELINE, args, { cwd: FETCH_REPO, stdio: 'inherit', env });
 
     // Ne vjeruj exit kodu (run_pipeline je set -e-toleran, non-fatalni koraci); provjeri disk.
     if (downloaded(job.youtube_id)) {

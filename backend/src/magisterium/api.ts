@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { bearerAuth } from 'hono/bearer-auth';
 import type { Env } from '../types';
+import { parseMagisteriumModel } from '../types';
 import {
   claimMagisteriumJobs,
   enqueueMagisteriumJob,
@@ -21,12 +22,22 @@ magisteriumApi.use('*', async (c, next) => {
 
 // Enqueue zahtjeva (programatski/bridge). Admin koristi gumbe u /admin listi.
 magisteriumApi.post('/', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { youtube_id?: string; lang?: string };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    youtube_id?: string;
+    lang?: string;
+    model?: string;
+  };
   if (!body.youtube_id) return c.json({ error: 'youtube_id nedostaje' }, 400);
+  // Nepoznat model → 400 umjesto tihog pada na default: programatski pozivatelj koji
+  // traži konkretan model mora saznati da ga nije dobio.
+  if (body.model && !parseMagisteriumModel(body.model)) {
+    return c.json({ error: `model '${body.model}' nije dozvoljen` }, 400);
+  }
   const { row, deduped } = await enqueueMagisteriumJob(c.env.DB, {
     youtubeId: body.youtube_id,
     lang: body.lang,
     source: 'admin',
+    model: body.model ?? null,
   });
   return c.json({ job: row, deduped }, deduped ? 200 : 201);
 });

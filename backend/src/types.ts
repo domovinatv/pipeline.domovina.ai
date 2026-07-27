@@ -34,6 +34,101 @@ export type MagisteriumLang = (typeof MAGISTERIUM_LANGS)[number];
 export const MAGISTERIUM_STATES = ['queued', 'running', 'done', 'failed'] as const;
 export type MagisteriumState = (typeof MAGISTERIUM_STATES)[number];
 
+// ───────────────────────── Izbor modela za AI korake ─────────────────────────
+// Koraci 7 (sažetak) + 8 (outline + članak) u fetch.domovina.tv imaju zamjenjiv backend
+// (`run_pipeline.sh --gemini-backend vertex|cli|claude`, uz `CLAUDE_MODEL`/`CLAUDE_EFFORT`).
+// Ovdje živi izbor koji admin napravi PO VIDEU; bridge ga prevede u zastavice/env.
+
+export const LLM_BACKENDS = ['vertex', 'cli', 'claude'] as const;
+export type LlmBackend = (typeof LLM_BACKENDS)[number];
+
+export interface ArticleModelOption {
+  value: string; // ono što ide u <select>/API: 'vertex' | 'cli' | 'claude:opus' | …
+  backend: LlmBackend;
+  model: string | null; // NULL = default tog backenda (gemini.conf / CLAUDE_MODEL)
+  label: string;
+  hint: string;
+}
+
+// ⚠️ NAMJERNO BEZ 'fable', iako ga `generate_article_gemini.js:CLAUDE_SLUGS` poznaje.
+// Downstream (channel_index, CDN manifest) dedupa članke po LEKSIKOGRAFSKI NAJVEĆEM
+// `_{datum}_{model}.article.json`, a slug ide u IME datoteke. 'opus'/'sonnet'/'haiku'
+// počinju slovom > 'g' pa pri istom datumu pobjeđuju `gemini-*`; 'fable' počinje s 'f' < 'g'
+// → članak bi se uredno generirao, spremio i NIKAD servirao. Dok se to ne popravi uzvodno
+// (slug koji sortira iznad `gemini-`), Fable se ne nudi u UI-u.
+export const ARTICLE_MODELS: ArticleModelOption[] = [
+  {
+    value: 'vertex',
+    backend: 'vertex',
+    model: null,
+    label: 'Gemini 3.5 Flash (Vertex) — standard',
+    hint: 'Dosadašnje ponašanje. Jeftino, ide na GCP kredite, global endpoint.',
+  },
+  {
+    value: 'claude:opus',
+    backend: 'claude',
+    model: 'opus',
+    label: 'Claude Opus (pretplata) — najviša kvaliteta',
+    hint: 'claude -p --model opus pod Claude Code pretplatom (alias trenutno → Opus 5). ~5 poziva / ~430k ulaznih tokena po epizodi.',
+  },
+  {
+    value: 'claude:sonnet',
+    backend: 'claude',
+    model: 'sonnet',
+    label: 'Claude Sonnet (pretplata)',
+    hint: 'Jeftinije od Opusa, i dalje pod pretplatom.',
+  },
+  {
+    value: 'claude:haiku',
+    backend: 'claude',
+    model: 'haiku',
+    label: 'Claude Haiku (pretplata)',
+    hint: 'Najjeftiniji Claude put; za kratke/jednostavne videe.',
+  },
+  {
+    value: 'cli',
+    backend: 'cli',
+    model: null,
+    label: 'Gemini CLI (fallback)',
+    hint: 'Kad Vertex zapinje (429/403) — koristi user-level google login.',
+  },
+];
+
+export const DEFAULT_ARTICLE_MODEL = 'vertex';
+
+// Razriješi vrijednost iz forme/API-ja u (backend, model). Vrati null za nepoznatu
+// vrijednost — pozivatelj tada padne na default umjesto da upiše smeće u bazu.
+export function parseArticleModel(
+  value: string | null | undefined,
+): { backend: LlmBackend; model: string | null } | null {
+  if (!value) return null;
+  const opt = ARTICLE_MODELS.find((o) => o.value === value);
+  return opt ? { backend: opt.backend, model: opt.model } : null;
+}
+
+// Obrnuto: (backend, model) iz baze → vrijednost za <select> (da UI pokaže što je odabrano).
+export function articleModelValue(backend?: string | null, model?: string | null): string {
+  const opt = ARTICLE_MODELS.find(
+    (o) => o.backend === (backend || 'vertex') && (o.model ?? null) === (model ?? null),
+  );
+  return opt?.value ?? DEFAULT_ARTICLE_MODEL;
+}
+
+// Magisterium (korak 8.5) ide isključivo kroz Claude Code CLI — runbook koristi Magisterium
+// MCP alate, što Vertex/Gemini put nema. Zato samo Claude aliasi. Ponuda je namjerno ISTA
+// kao za članak (bez 'fable') da UI nigdje ne nudi model koji na drugom koraku tiho pukne.
+export const MAGISTERIUM_MODELS = ['opus', 'sonnet', 'haiku'] as const;
+export type MagisteriumModel = (typeof MAGISTERIUM_MODELS)[number];
+export const DEFAULT_MAGISTERIUM_MODEL: MagisteriumModel = 'opus';
+
+// Validiraj model za Magisterium; nepoznat → null (pozivatelj padne na default).
+export function parseMagisteriumModel(value: string | null | undefined): MagisteriumModel | null {
+  if (!value) return null;
+  return (MAGISTERIUM_MODELS as readonly string[]).includes(value)
+    ? (value as MagisteriumModel)
+    : null;
+}
+
 // Stanja koja lokalni bridge smije postaviti preko PATCH /api/jobs/:id.
 export const BRIDGE_SETTABLE: JobState[] = [
   'fetching',
@@ -67,6 +162,9 @@ export interface JobRow {
   priority: number; // 0 = standard (noćni Colab bulk), 1 = prioritet (Modal instant fast-path)
   credit_cost: number; // koliko kredita je rezervirano za ovaj job (1 standard, 3 prioritet)
   with_magisterium: number; // 1 = želimo Magisterium (KORAK 8.5), 0 = admin isključio za ovaj video
+  llm_backend: string; // 'vertex' (default) | 'cli' | 'claude' — backend koraka 7+8
+  llm_model: string | null; // NULL = default tog backenda; inače slug ('opus'|'sonnet'|'haiku')
+  magisterium_model: string | null; // NULL = 'opus' — model za MCP runbook (korak 8.5)
   transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju
   transcribe_claimed_at: number | null; // unix sekunde kad je transcribe lock uzet
   done_at: number | null;
@@ -138,6 +236,7 @@ export interface MagisteriumJobRow {
   lang: string; // 'hr' | 'en'
   state: string; // queued | running | done | failed
   source: string; // 'admin' | 'auto'
+  model: string | null; // NULL = 'opus' — model kojim poller pokreće MCP runbook
   error: string | null;
   created_at: number;
   updated_at: number;

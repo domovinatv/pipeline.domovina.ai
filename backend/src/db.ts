@@ -102,6 +102,9 @@ export async function createImportedJob(
       ts,
     )
     .run();
+  // Uvezena epizoda je već objavljena — video je pokriven, pa ne smije ostati u podlisti
+  // kao "za odlučiti" (isto obrazloženje kao u createJob).
+  await linkDiscoveredToJob(db, input.youtubeId, id);
   return (await getJob(db, id))!;
 }
 
@@ -134,6 +137,10 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       ts,
     )
     .run();
+  // Zaveži podlistu OVDJE, a ne na pozivnim mjestima: job nastaje iz /admin forme, /api/jobs,
+  // /api/v1/jobs i promote-a iz podliste — jedno mjesto znači da se ni na jednom putu ne može
+  // zaboraviti. Za promote je no-op (redak je već 'promoted' prije ovog poziva).
+  await linkDiscoveredToJob(db, input.youtubeId, id);
   return (await getJob(db, id))!;
 }
 
@@ -811,12 +818,16 @@ export async function upsertDiscovered(
     return { inserted: false };
   }
 
+  // Obrnuti smjer od linkDiscoveredToJob: video je RUČNO dodan u queue PRIJE nego što ga je
+  // nightly otkrio (čest slučaj — admin zalijepi URL isti dan). Da se ne pojavi kao 'new' i
+  // ne ponudi na ponovno slanje, upiši ga odmah kao 'promoted' i veži za postojeći job.
+  const covering = await findCoveringJob(db, input.youtubeId);
   await db
     .prepare(
       `INSERT INTO discovered_videos
          (id, youtube_id, youtube_url, title, channel, channel_dir, duration_seconds, published_at,
-          batch_date, stage, promotable, source_platform, state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`,
+          batch_date, stage, promotable, source_platform, state, job_id, promoted_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       newId(),
@@ -831,6 +842,9 @@ export async function upsertDiscovered(
       input.stage ?? 'fetched',
       input.promotable === false ? 0 : 1,
       input.sourcePlatform ?? 'youtube',
+      covering ? 'promoted' : 'new',
+      covering?.id ?? null,
+      covering ? ts : null,
       ts,
       ts,
     )
@@ -1015,6 +1029,46 @@ export async function markDiscoveredPromoted(
     .bind(jobId, ts, ts, id)
     .run();
   return (res.meta.changes ?? 0) === 1;
+}
+
+// Zaveži otkriveni video za job koji je nastao NEKIM DRUGIM putem (ručni unos u /admin,
+// API ključ, dashboard) — ne klikom na ⚡ u podlisti. Bez ovoga isti video ostaje 'new' u
+// `/admin/discovered` i nudi se za slanje iako je već u obradi → dupla obrada istog videa.
+//
+// Guard `state='new'`: ne dira 'promoted' (već vezan) ni 'dismissed' (admin ga svjesno
+// sklonio — ako ga poslije ipak ručno doda, njegova odluka o podlisti ostaje).
+// Vraća broj povezanih redaka (0 = video nije bio u podlisti, što je normalno).
+export async function linkDiscoveredToJob(
+  db: D1Database,
+  youtubeId: string,
+  jobId: string,
+): Promise<number> {
+  const ts = nowSec();
+  const res = await db
+    .prepare(
+      `UPDATE discovered_videos SET state='promoted', job_id=?, promoted_at=?, updated_at=?
+        WHERE youtube_id=? AND state='new'`,
+    )
+    .bind(jobId, ts, ts, youtubeId)
+    .run();
+  return res.meta.changes ?? 0;
+}
+
+// Postoji li za ovaj video job koji znači "ovo je već pokriveno"? Namjerno UKLJUČUJE
+// terminalne 'done'/'skipped' (obrađeno / svjesno preskočeno), ali IZOSTAVLJA 'failed' —
+// pali job je razlog da se video ponovno ponudi u podlisti, ne da se sakrije.
+async function findCoveringJob(
+  db: D1Database,
+  youtubeId: string,
+): Promise<{ id: string } | null> {
+  const row = await db
+    .prepare(
+      `SELECT id FROM jobs WHERE youtube_id=? AND deleted_at IS NULL AND state != 'failed'
+        ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(youtubeId)
+    .first<{ id: string }>();
+  return row ?? null;
 }
 
 // Skloni iz podliste (ne zanima me) / vrati natrag. Ne briše redak — podlista je dnevni

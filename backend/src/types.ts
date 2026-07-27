@@ -46,7 +46,8 @@ export interface ArticleModelOption {
   value: string; // ono što ide u <select>/API: 'vertex' | 'cli' | 'claude:opus' | …
   backend: LlmBackend;
   model: string | null; // NULL = default tog backenda (gemini.conf / CLAUDE_MODEL)
-  label: string;
+  label: string; // puni opis — forma za dodavanje, gdje ima mjesta
+  short: string; // kratka oznaka — select u retku tablice i badge (inače se kropa)
   hint: string;
 }
 
@@ -62,6 +63,7 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     backend: 'vertex',
     model: null,
     label: 'Gemini 3.5 Flash (Vertex) — standard',
+    short: 'Gemini 3.5 Flash',
     hint: 'Dosadašnje ponašanje. Jeftino, ide na GCP kredite, global endpoint.',
   },
   {
@@ -69,6 +71,7 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     backend: 'claude',
     model: 'opus',
     label: 'Claude Opus (pretplata) — najviša kvaliteta',
+    short: 'Claude Opus',
     hint: 'claude -p --model opus pod Claude Code pretplatom (alias trenutno → Opus 5). ~5 poziva / ~430k ulaznih tokena po epizodi.',
   },
   {
@@ -76,6 +79,7 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     backend: 'claude',
     model: 'sonnet',
     label: 'Claude Sonnet (pretplata)',
+    short: 'Claude Sonnet',
     hint: 'Jeftinije od Opusa, i dalje pod pretplatom.',
   },
   {
@@ -83,6 +87,7 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     backend: 'claude',
     model: 'haiku',
     label: 'Claude Haiku (pretplata)',
+    short: 'Claude Haiku',
     hint: 'Najjeftiniji Claude put; za kratke/jednostavne videe.',
   },
   {
@@ -90,6 +95,7 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     backend: 'cli',
     model: null,
     label: 'Gemini CLI (fallback)',
+    short: 'Gemini CLI',
     hint: 'Kad Vertex zapinje (429/403) — koristi user-level google login.',
   },
 ];

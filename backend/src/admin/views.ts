@@ -24,7 +24,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.11.0';
+export const APP_VERSION = 'v0.12.0';
 
 // <option> lista za izbor modela koraka 7+8. Katalog je jedan (types.ts) — UI ga samo
 // renderira, pa se nova/uklonjena opcija ne mora održavati na dva mjesta.
@@ -49,7 +49,12 @@ function magisteriumModelOptions(selected: string): string {
 
 // Katalog serijaliziran za klijentski JS (selecti u retcima tablice se renderiraju tamo).
 const MODEL_CATALOG_JSON = JSON.stringify({
-  article: ARTICLE_MODELS.map((o) => ({ value: o.value, label: o.label, hint: o.hint })),
+  article: ARTICLE_MODELS.map((o) => ({
+    value: o.value,
+    label: o.label,
+    short: o.short,
+    hint: o.hint,
+  })),
   magisterium: MAGISTERIUM_MODELS,
   defaults: { article: DEFAULT_ARTICLE_MODEL, magisterium: DEFAULT_MAGISTERIUM_MODEL },
 });
@@ -116,7 +121,22 @@ header .badge {
   padding: .25rem .7rem; border-radius: 999px; font-size: .78rem;
   color: var(--muted); font-weight: 600; white-space: nowrap;
 }
-main { padding: 1.75rem 1.5rem 3rem; max-width: 86rem; margin: 0 auto; }
+/* Širina sadržaja: FLUID je default (tablica s modelima traži horizontalni prostor).
+   Klasa .contained na :root prebacuje na omeđeni stupac; postavlja je inline skripta
+   u <head>-u iz localStoragea, PRIJE prvog painta, da nema bljeska pogrešne širine.
+   NB: bez backticka u ovom komentaru — cijeli BASE_STYLE živi u template literalu. */
+main { padding: 1.75rem 1.5rem 3rem; max-width: none; margin: 0; }
+:root.contained main { max-width: 86rem; margin: 0 auto; }
+/* Toggle u headeru — dva segmenta, aktivni je "utisnut". */
+.widthtoggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; background: var(--surface); }
+.widthtoggle button {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-family: inherit; font-size: .74rem; font-weight: 700; padding: .3rem .7rem;
+  display: inline-flex; align-items: center; gap: .3rem; transition: background .12s, color .12s;
+}
+.widthtoggle button:hover { color: var(--navy); }
+.widthtoggle button[aria-pressed="true"] { background: var(--card); color: var(--navy); box-shadow: inset 0 0 0 1px var(--border); }
+header .headright { display: flex; align-items: center; gap: .6rem; }
 h1 { font-size: 1.4rem; font-weight: 800; letter-spacing: -.01em; color: var(--navy); margin: 0 0 1.1rem; }
 /* Stat-kartice: bijele s bočnom akcent trakom u boji stanja (auto-fill drži karticu kompaktnom i kad ih je malo) */
 .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.75rem, 1fr)); gap: .7rem; margin-bottom: 1.4rem; }
@@ -187,12 +207,22 @@ h1 { font-size: 1.4rem; font-weight: 800; letter-spacing: -.01em; color: var(--n
 .addbox select:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
 .modelhint { font-size: .76rem; color: var(--muted); line-height: 1.4; min-height: 1.05rem; }
 .modelhint.warn { color: #92400E; }
+/* Stupac AKCIJE nosi gumbe + dva selecta; bez poda se stisne i sve se prelomi ružno.
+   Roditelj .table-wrap ima overflow-x:auto, pa se u najgorem slučaju dobije horizontalni
+   scroll umjesto kropanja. Naslov je jedini stupac koji smije rasti. */
+td[data-l="Akcije"], th.col-akcije { min-width: 23rem; }
+td[data-l="Naslov"] { min-width: 18rem; }
+td[data-l="Video"], td[data-l="Dodano"], td[data-l="Status"], td[data-l="Rezultat"] { white-space: nowrap; }
+/* Gumbi i selecti u jednom retku, s urednim prelomom kad ponestane mjesta. */
+td[data-l="Akcije"] .actwrap { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
+td[data-l="Akcije"] .actwrap .act { margin: 0; }
+td[data-l="Akcije"] .modelwrap { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .35rem; }
 /* Kompaktni select unutar retka tablice (promjena modela na postojećem jobu). */
 select.modelsel {
   border: 1px solid var(--border); background: var(--card); color: var(--navy);
   border-radius: .5rem; padding: .24rem .4rem; font-size: .74rem; font-weight: 600;
-  font-family: inherit; cursor: pointer; margin-right: .25rem; margin-bottom: .25rem;
-  max-width: 11rem;
+  font-family: inherit; cursor: pointer; margin: 0;
+  max-width: 13rem;
 }
 select.modelsel:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
 select.modelsel.mag { color: #4338CA; border-color: #DDD6FE; }
@@ -410,6 +440,11 @@ footer { margin: 2rem 0 0; padding: 1.1rem 1.5rem 1.4rem; border-top: 1px solid 
   tbody tr:hover { background: var(--card); }
   tbody td { display: block; width: 100%; border-bottom: 1px solid var(--surface); padding: .6rem 0; }
   tbody tr td:last-child { border-bottom: 0; }
+  /* Podovi širine stupaca vrijede SAMO za tablični prikaz — u kartici bi 23rem
+     prelilo 390px ekran u horizontalni scroll. Isto i nowrap na uskim stupcima. */
+  td[data-l] { min-width: 0; white-space: normal; }
+  td[data-l="Akcije"] .modelwrap { margin-top: .4rem; }
+  select.modelsel { max-width: 100%; flex: 1 1 8rem; padding: .4rem .5rem; font-size: .82rem; }
   td[data-l]::before {
     content: attr(data-l); display: block; font-size: .64rem; font-weight: 800;
     letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-bottom: .3rem;
@@ -421,6 +456,10 @@ footer { margin: 2rem 0 0; padding: 1.1rem 1.5rem 1.4rem; border-top: 1px solid 
   .steps { max-width: 100%; }
   .steps li { flex-wrap: wrap; }
   .steps .s-badge { margin-left: auto; }
+  /* Header na mobitelu: badge je dekorativan i prvi ide van da toggle stane u JEDAN
+     redak (inače se labela prelomi ispod glifa i header naraste na dva reda). */
+  header .badge { display: none; }
+  .widthtoggle button { white-space: nowrap; padding: .35rem .6rem; }
   /* Veće touch mete */
   button.act { padding: .45rem .7rem; font-size: .84rem; }
   .pillbtn { padding: .35rem .6rem; }
@@ -438,14 +477,45 @@ export function layout(title: string, body: string): string {
 <html lang="hr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>${BASE_STYLE}
+<script>
+// Primijeni spremljenu širinu PRIJE prvog painta (u <head>-u, prije <body>) — inače
+// stranica bljesne fluid pa skoči u omeđeno. Default je fluid: samo eksplicitni
+// 'contained' iz localStoragea dodaje klasu.
+try { if (localStorage.getItem('dtvWidth') === 'contained') document.documentElement.classList.add('contained'); } catch (e) {}
+</script>
 </head><body>
 <div class="tricolor"><span class="red"></span><span style="background:#fff"></span><span class="navy"></span></div>
 <header>
   <div class="brand">${HEADER_LOGO_SVG}<span class="word">DOMOVINA<span class="accent"> Pipeline</span></span></div>
-  <span class="badge">ad-hoc pipeline queue</span>
+  <div class="headright">
+    <div class="widthtoggle" role="group" aria-label="Širina prikaza">
+      <button type="button" data-width="fluid" title="Puna širina ekrana">⇔ Fluid</button>
+      <button type="button" data-width="contained" title="Omeđeni stupac (max 86rem)">▭ Omeđeno</button>
+    </div>
+    <span class="badge">ad-hoc pipeline queue</span>
+  </div>
 </header>
 <main>${body}</main>
 <footer>pipeline.domovina.ai — ručna obrada proizvoljnog (i unlisted) YouTube videa kroz puni AI pipeline <span class="dim" style="white-space:nowrap;">· ${APP_VERSION}</span></footer>
+<script>
+// Toggle širine. Dijeljen svim stranicama (admin + dashboard) jer živi u layoutu.
+(function () {
+  var root = document.documentElement;
+  var btns = document.querySelectorAll('.widthtoggle button');
+  function paint() {
+    var mode = root.classList.contains('contained') ? 'contained' : 'fluid';
+    btns.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.width === mode)); });
+  }
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      root.classList.toggle('contained', b.dataset.width === 'contained');
+      try { localStorage.setItem('dtvWidth', b.dataset.width); } catch (e) {}
+      paint();
+    });
+  });
+  paint();
+})();
+</script>
 </body></html>`;
 }
 
@@ -587,7 +657,7 @@ ${navTabs('queue')}
 <div class="table-wrap">
   <table>
     <thead><tr>
-      <th>Dodano</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th>Akcije</th>
+      <th>Dodano</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th class="col-akcije">Akcije</th>
     </tr></thead>
     <tbody id="rows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
   </table>
@@ -682,12 +752,11 @@ function articleValue(j){
   var want = model ? (backend+':'+model) : backend;
   return MODELS.article.some(function(o){ return o.value===want; }) ? want : MODELS.defaults.article;
 }
-// Kratka oznaka modela za badge (bez punog labela — redak je uzak).
+// Kratka oznaka modela za badge — ista koju koristi i select u retku (polje short u katalogu).
 function articleShort(j){
   var v = articleValue(j);
-  if (v==='vertex') return 'Gemini 3.5 Flash';
-  if (v==='cli') return 'Gemini CLI';
-  return 'Claude ' + (MAG_MODEL_LABEL[v.split(':')[1]] || v.split(':')[1]);
+  var o = MODELS.article.filter(function(x){ return x.value===v; })[0];
+  return o ? (o.short || o.label) : v;
 }
 // Badge u meta čeliji: kojim je modelom job KONFIGURIRAN (7+8 i 8.5). Non-default izbor
 // se ističe naglašeno — default (Gemini + Opus) se ne prikazuje da ne zatrpava redak.
@@ -703,9 +772,10 @@ function modelBadge(j){
   return out;
 }
 // Kompaktni select u retku. kind='llm-model' (koraci 7+8) | 'mag-model' (korak 8.5).
+// Koristi KRATKE oznake (o.short) — puni labeli iz forme se u retku samo kropaju.
 function modelSel(j, kind, opts, current, title, cls){
   var o = opts.map(function(v){
-    var label = kind==='mag-model' ? ('🕊 '+(MAG_MODEL_LABEL[v.value]||v.value)) : v.label;
+    var label = kind==='mag-model' ? ('🕊 '+(MAG_MODEL_LABEL[v.value]||v.value)) : (v.short || v.label);
     return '<option value="'+esc(v.value)+'"'+(v.value===current?' selected':'')+'>'+esc(label)+'</option>';
   }).join('');
   return '<select class="modelsel'+(cls?' '+cls:'')+'" data-id="'+esc(j.id)+'" data-kind="'+kind+'" title="'+esc(title)+'">'+o+'</select>';
@@ -734,13 +804,15 @@ function actions(j){
   if (j.deleted_at) {   // soft-deleted: samo vrati ili trajno obriši
     b.push(btn(j.id,'restore','↩ Vrati'));
     b.push(btn(j.id,'purge','🗑 Trajno'));
-    return b.join('');
+    return '<div class="actwrap">'+b.join('')+'</div>';
   }
   if (j.state==='queued') { if (!j.priority) b.push(btn(j.id,'prioritize','⚡ Prioritet','Sponzoriraj instant obradu (Modal) — besplatno, radi i za API jobove')); b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
   b = b.concat(magActions(j));
   b.push(btn(j.id,'delete','✕'));
-  return b.join('') + '<div class="sub">' + modelSelects(j) + '</div>';
+  // Dva reda: gumbi gore, selecti modela ispod — flex-wrap umjesto inline-blockova
+  // koji su se prelamali nasred retka.
+  return '<div class="actwrap">'+b.join('')+'</div><div class="modelwrap">'+modelSelects(j)+'</div>';
 }
 
 // Izvor zahtjeva: badge koji pokazuje TKO je predao job — API ključ (ime, iz

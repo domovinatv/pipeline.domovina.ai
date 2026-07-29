@@ -24,7 +24,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.14.0';
+export const APP_VERSION = 'v0.15.0';
 
 // <option> lista za izbor modela koraka 7+8. Katalog je jedan (types.ts) — UI ga samo
 // renderira, pa se nova/uklonjena opcija ne mora održavati na dva mjesta.
@@ -672,7 +672,7 @@ ${navTabs('queue')}
         <label for="article_model">Model za sažetak + članak (koraci 7+8)</label>
         <select id="article_model" name="article_model">${articleModelOptions(DEFAULT_ARTICLE_MODEL)}</select>
         <div class="modelhint" id="article_model_hint"></div>
-        <div class="modelhint warn">⚠ Vrijedi samo za <strong>⚡ prioritetne</strong> jobove — njih poller vrti kao zaseban single-video run. Standardni idu kroz noćni <em>batch</em> koji koracima 7+8 daje jedan globalni backend za sve epizode odjednom.</div>
+        <div class="modelhint warn">⚠ Vrijedi samo za <strong>⚡ prioritetne</strong> jobove — njih poller vrti kao zaseban single-video run. Standardni idu kroz noćni <em>batch</em> s jednim globalnim backendom za sve epizode — od 2026-07-29 i on je <strong>Claude Opus</strong> (nightly_pipeline.sh).</div>
       </div>
       <div class="field">
         <label for="magisterium_model">Model za Magisterium MCP (korak 8.5)</label>

@@ -65,17 +65,17 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     value: 'vertex',
     backend: 'vertex',
     model: null,
-    label: 'Gemini 3.5 Flash (Vertex) — standard',
+    label: 'Gemini 3.5 Flash (Vertex) — jeftina opcija',
     short: 'Gemini 3.5 Flash',
-    hint: 'Dosadašnje ponašanje. Jeftino, ide na GCP kredite, global endpoint.',
+    hint: 'Bivši default (do 2026-07-29). Jeftino, ide na GCP kredite; sklonije halucinaciji imena govornika.',
   },
   {
     value: 'claude:opus',
     backend: 'claude',
     model: 'opus',
-    label: 'Claude Opus (pretplata) — najviša kvaliteta',
+    label: 'Claude Opus (pretplata) — default, najviša kvaliteta',
     short: 'Claude Opus',
-    hint: 'claude -p --model opus pod Claude Code pretplatom (alias trenutno → Opus 5). ~5 poziva / ~430k ulaznih tokena po epizodi.',
+    hint: 'claude -p --model opus pod Claude Code pretplatom (alias trenutno → Opus 5). Izmjereno ~4 poziva / ~150-210k ulaznih tokena po epizodi.',
   },
   {
     value: 'claude:sonnet',
@@ -103,7 +103,10 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
   },
 ];
 
-export const DEFAULT_ARTICLE_MODEL = 'vertex';
+// Default od 2026-07-29: Claude Opus (premium output za trajni statični sadržaj;
+// odluka nakon incidenta atribucije imena kod Gemini Flasha — Ivan Voras / cb4CsFDCDho).
+// Vertex ostaje dostupan kao jeftina opcija po videu.
+export const DEFAULT_ARTICLE_MODEL = 'claude:opus';
 
 // Razriješi vrijednost iz forme/API-ja u (backend, model). Vrati null za nepoznatu
 // vrijednost — pozivatelj tada padne na default umjesto da upiše smeće u bazu.

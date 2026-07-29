@@ -130,8 +130,12 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.priority ?? 0,
       input.creditCost ?? 1,
       input.withMagisterium === false ? 0 : 1,
-      input.llmBackend ?? 'vertex',
-      input.llmModel ?? null,
+      // Default za NOVE jobove (2026-07-29): Claude Opus za korake 7+8 — premium output
+      // za trajni statični sadržaj (odluka nakon incidenta atribucije Ivan Voras).
+      // Eksplicitan odabir iz forme/API-ja i dalje pobjeđuje; model se defaulta SAMO
+      // kad backend nije zadan (zadani vertex bez modela ostaje vertex+null).
+      input.llmBackend ?? 'claude',
+      input.llmModel ?? (input.llmBackend == null ? 'opus' : null),
       input.magisteriumModel ?? null,
       ts,
       ts,

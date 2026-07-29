@@ -1,5 +1,8 @@
 export interface Env {
   DB: D1Database;
+  // R2 binding na javni CDN bucket (cdn-domovina-ai) — read-only, za /admin/jobs/:id/files
+  // live listing artefakata. Optional: bez bindinga ruta vraća 503, ostalo radi normalno.
+  CDN_BUCKET?: R2Bucket;
   // Secrets (wrangler secret put):
   ADMIN_USER?: string;
   ADMIN_PASS?: string;

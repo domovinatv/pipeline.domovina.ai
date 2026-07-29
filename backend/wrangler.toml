@@ -28,6 +28,14 @@ database_name = "pipeline_domovina"
 database_id = "3b234c3f-efa5-4368-b4d6-4421269e5a04"
 migrations_dir = "migrations"
 
+# R2 — javni CDN bucket (cdn.domovina.ai) koji puni fetch.domovina.tv/upload_to_r2.js.
+# Ovdje SAMO read-only upotreba: /admin/jobs/:id/files live izlista artefakte videa
+# (data/{id}/ + images/{id}/). Javni R2 bucket nema directory listing pa je binding
+# jedini način da admin vidi stvarno stanje bez održavanja liste ključeva.
+[[r2_buckets]]
+binding = "CDN_BUCKET"
+bucket_name = "cdn-domovina-ai"
+
 [vars]
 # Bazni URL frontenda gdje živi gotov video (za detail_url = {SITE_BASE}/v/{id}).
 SITE_BASE = "https://domovina.ai"

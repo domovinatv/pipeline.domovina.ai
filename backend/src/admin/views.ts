@@ -24,7 +24,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.12.1';
+export const APP_VERSION = 'v0.13.0';
 
 // <option> lista za izbor modela koraka 7+8. Katalog je jedan (types.ts) — UI ga samo
 // renderira, pa se nova/uklonjena opcija ne mora održavati na dva mjesta.
@@ -574,6 +574,68 @@ export function statePill(state: string): string {
   return `<span class="pill ${cls}">${state}</span>`;
 }
 
+function humanSize(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+// Stranica: live listing SVIH CDN artefakata jednog videa iz R2 bindinga
+// (/admin/jobs/:id/files). Server-rendered redovi → data-l atributi obavezni
+// za mobile kartice (vidi docs/UI.md).
+export function renderJobFilesPage(opts: {
+  jobId: string;
+  youtubeId: string;
+  title: string | null;
+  cdnBase: string;
+  groups: { label: string; prefix: string; files: { key: string; size: number; uploaded: string }[] }[];
+}): string {
+  const fmtUploaded = (iso: string) =>
+    new Date(iso).toLocaleString('hr-HR', {
+      timeZone: 'Europe/Zagreb',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+  const groupsHtml = opts.groups
+    .map((g) => {
+      const total = g.files.reduce((s, f) => s + f.size, 0);
+      const rows = g.files
+        .map((f) => {
+          const rel = f.key.slice(g.prefix.length);
+          const url = `${opts.cdnBase}/${f.key}`;
+          return `<tr>
+  <td data-l="Datoteka"><a class="mono" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(rel)}</a></td>
+  <td data-l="Veličina" style="white-space:nowrap;">${humanSize(f.size)}</td>
+  <td data-l="Uploadano" style="white-space:nowrap;">${escapeHtml(fmtUploaded(f.uploaded))}</td>
+</tr>`;
+        })
+        .join('');
+      const empty = `<tr><td colspan="3" class="dim">Nema datoteka pod ovim prefiksom.</td></tr>`;
+      return `<div class="steps-head" style="margin-top:1.2rem;">${escapeHtml(g.label)}
+  <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:600;"> · ${g.files.length} ${g.files.length % 100 === 1 && g.files.length % 10 === 1 ? 'datoteka' : g.files.length % 10 >= 2 && g.files.length % 10 <= 4 && (g.files.length % 100 < 12 || g.files.length % 100 > 14) ? 'datoteke' : 'datoteka'} · ${humanSize(total)} · <span class="mono">${escapeHtml(g.prefix)}</span></span></div>
+<table>
+  <thead><tr><th>Datoteka</th><th>Veličina</th><th>Uploadano</th></tr></thead>
+  <tbody>${rows || empty}</tbody>
+</table>`;
+    })
+    .join('');
+
+  const body = `
+<h1>CDN datoteke — ${escapeHtml(opts.title || opts.youtubeId)}</h1>
+<p style="display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
+  <a class="tab" href="/admin">← natrag na queue</a>
+  <span class="mono dim">${escapeHtml(opts.youtubeId)}</span>
+</p>
+${groupsHtml}
+<p class="dim" style="font-size:.8rem; margin-top:1rem;">Live listing iz R2 bucketa (ne curated lista ključeva) — vidi se stvarno stanje CDN-a, uključujući i naknadno dodane artefakte. Oprez: <span class="mono">video.mp4</span> / <span class="mono">video_h264.mp4</span> znaju imati stotine MB. JSON artefakti se serviraju s <span class="mono">immutable</span> cacheom — nakon regeneracije treba hard refresh.</p>`;
+  return layout(`DOMOVINA Pipeline — datoteke ${opts.youtubeId}`, body);
+}
+
 // Navigacijski tabovi između queue, otkrivenih videa i API-ključeva.
 function navTabs(active: 'queue' | 'discovered' | 'keys'): string {
   const tab = (href: string, id: string, label: string) =>
@@ -858,7 +920,8 @@ function statusCell(j){
 // Detail redak (colspan preko cijele tablice) — sadrži step-tracker, lazy-loadan.
 function detailRow(j){
   return '<tr class="detail-row" data-detail="'+esc(j.id)+'"'+(expandedId===j.id?'':' hidden')+'>'+
-    '<td colspan="6"><div class="steps-head">Pipeline koraci</div>'+
+    '<td colspan="6"><div class="steps-head">Pipeline koraci'+
+    ' <a class="s-open" style="text-transform:none;letter-spacing:0;margin-left:.5rem;" href="/admin/jobs/'+esc(j.id)+'/files" title="Live listing svih CDN artefakata ovog videa (R2)">📁 sve datoteke</a></div>'+
     '<div id="steps-'+esc(j.id)+'"><div class="steps-loading">Učitavam korake…</div></div></td></tr>';
 }
 function stepBadge(st){ return st==='done'?'gotovo':st==='skipped'?'preskočeno':'čeka'; }

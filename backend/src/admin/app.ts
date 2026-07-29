@@ -38,6 +38,7 @@ import {
   layout,
   renderAlreadyPublishedPage,
   renderDiscoveredPage,
+  renderJobFilesPage,
   renderJobsPage,
   renderKeysPage,
 } from './views';
@@ -137,6 +138,48 @@ admin.post('/jobs', async (c) => {
 //   skip     — state=skipped (nikad se ne claima)
 //   postpone — state=postponed (drži izvan queuea)
 //   requeue  — vrati u queued (iz skipped/postponed/failed), očisti grešku
+// Live listing SVIH CDN artefakata jednog videa (data/{id}/ + images/{id}/) direktno
+// iz R2 bindinga — ne iz curated liste ključeva, pa pokazuje i buduće/neočekivane
+// datoteke. Javni bucket nema directory listing, ovo je jedini potpun pogled.
+admin.get('/jobs/:id/files', async (c) => {
+  if (!c.env.CDN_BUCKET) {
+    return c.text('CDN_BUCKET R2 binding nije konfiguriran (vidi wrangler.toml [[r2_buckets]]).', 503);
+  }
+  const job = await getJob(c.env.DB, c.req.param('id'));
+  if (!job) return c.text('Job ne postoji.', 404);
+  const cdnBase = (c.env.CDN_BASE || 'https://cdn.domovina.ai').replace(/\/$/, '');
+  // Dvije CDN zone istog videa (layout: vidi memory/docs — data = JSON/SRT/media,
+  // images = thumbnaili/screenshotovi/OG). Listamo s cursor petljom jer screenshotova
+  // + OG sličica zna biti preko default page sizea.
+  const zones: { label: string; prefix: string }[] = [
+    { label: 'Podaci (data/)', prefix: `data/${job.youtube_id}/` },
+    { label: 'Slike (images/)', prefix: `images/${job.youtube_id}/` },
+  ];
+  const groups = [];
+  for (const zone of zones) {
+    const files: { key: string; size: number; uploaded: string }[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await c.env.CDN_BUCKET.list({ prefix: zone.prefix, cursor, limit: 1000 });
+      for (const o of page.objects) {
+        files.push({ key: o.key, size: o.size, uploaded: o.uploaded.toISOString() });
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    files.sort((a, b) => a.key.localeCompare(b.key));
+    groups.push({ ...zone, files });
+  }
+  return c.html(
+    renderJobFilesPage({
+      jobId: job.id,
+      youtubeId: job.youtube_id,
+      title: job.title,
+      cdnBase,
+      groups,
+    })
+  );
+});
+
 //   mag-on/mag-off       — uključi/isključi Magisterium namjeru za ovaj video
 //   magisterium-hr/-en   — one-click: ubaci zahtjev za Magisterium (re)obradu (bridge poller ga pokrene)
 admin.post('/jobs/:id/:action', async (c) => {

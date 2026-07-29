@@ -33,7 +33,7 @@ import {
 import type { DiscoveredRow } from '../types';
 import { parseArticleModel, parseMagisteriumModel } from '../types';
 import { extractSourceRef, fetchOEmbed } from '../util';
-import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
+import { buildPipelineReport, isPublishedOnDomovina, listCdnFiles, reconcilePublishedJobs } from '../pipeline';
 import {
   layout,
   renderAlreadyPublishedPage,
@@ -148,27 +148,7 @@ admin.get('/jobs/:id/files', async (c) => {
   const job = await getJob(c.env.DB, c.req.param('id'));
   if (!job) return c.text('Job ne postoji.', 404);
   const cdnBase = (c.env.CDN_BASE || 'https://cdn.domovina.ai').replace(/\/$/, '');
-  // Dvije CDN zone istog videa (layout: vidi memory/docs — data = JSON/SRT/media,
-  // images = thumbnaili/screenshotovi/OG). Listamo s cursor petljom jer screenshotova
-  // + OG sličica zna biti preko default page sizea.
-  const zones: { label: string; prefix: string }[] = [
-    { label: 'Podaci (data/)', prefix: `data/${job.youtube_id}/` },
-    { label: 'Slike (images/)', prefix: `images/${job.youtube_id}/` },
-  ];
-  const groups = [];
-  for (const zone of zones) {
-    const files: { key: string; size: number; uploaded: string }[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await c.env.CDN_BUCKET.list({ prefix: zone.prefix, cursor, limit: 1000 });
-      for (const o of page.objects) {
-        files.push({ key: o.key, size: o.size, uploaded: o.uploaded.toISOString() });
-      }
-      cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor);
-    files.sort((a, b) => a.key.localeCompare(b.key));
-    groups.push({ ...zone, files });
-  }
+  const groups = await listCdnFiles(c.env.CDN_BUCKET, job.youtube_id);
   return c.html(
     renderJobFilesPage({
       jobId: job.id,

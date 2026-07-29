@@ -24,7 +24,7 @@ import { escapeHtml } from '../util';
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.13.0';
+export const APP_VERSION = 'v0.14.0';
 
 // <option> lista za izbor modela koraka 7+8. Katalog je jedan (types.ts) — UI ga samo
 // renderira, pa se nova/uklonjena opcija ne mora održavati na dva mjesta.

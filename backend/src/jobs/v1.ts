@@ -16,7 +16,7 @@ import {
 } from '../db';
 import { MAGISTERIUM_LANGS } from '../types';
 import { extractSourceRef, fetchOEmbed, sha256Hex } from '../util';
-import { buildPipelineReport, isPublishedOnDomovina, reconcilePublishedJobs } from '../pipeline';
+import { buildPipelineReport, isPublishedOnDomovina, listCdnFiles, reconcilePublishedJobs } from '../pipeline';
 
 // Javni programatski API (SaaS klijenti). Auth = per-key Bearer (≠ bridge INGEST_KEY).
 // Enqueue je gejtan na kredite: 1 kredit = 1 obrađeni video. Krediti se zasad pune
@@ -175,6 +175,20 @@ publicApi.get('/jobs/:id/pipeline', async (c) => {
   const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
   const report = await buildPipelineReport(cdnBase, job, c.env.SITE_BASE || 'https://domovina.ai');
   return c.json(report);
+});
+
+// Live listing CDN datoteka vlastitog joba (isti izvor kao admin /admin/jobs/:id/files,
+// ali scope-an na ključ). "📁 datoteke" prikaz u korisničkom /dashboard-u.
+publicApi.get('/jobs/:id/files', async (c) => {
+  const key = c.get('apiKey');
+  const job = await getJob(c.env.DB, c.req.param('id'));
+  if (!job || job.api_key_id !== key.id) return c.json({ error: 'not found' }, 404);
+  if (!c.env.CDN_BUCKET) {
+    return c.json({ error: 'CDN_BUCKET R2 binding nije konfiguriran' }, 503);
+  }
+  const cdnBase = (c.env.CDN_BASE || 'https://cdn.domovina.ai').replace(/\/$/, '');
+  const groups = await listCdnFiles(c.env.CDN_BUCKET, job.youtube_id);
+  return c.json({ cdn_base: cdnBase, groups });
 });
 
 // Lista vlastitih jobova.

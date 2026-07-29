@@ -180,9 +180,12 @@ function statusCell(j){
   return pill(j.state)+'<div><button class="pillbtn" data-jobid="'+esc(j.id)+'" aria-expanded="'+(open?'true':'false')+'">'+(open?'▾':'▸')+' koraci</button></div>';
 }
 function detailRow(j){
+  var fOpen = filesOpen && expandedId===j.id;
   return '<tr class="detail-row" data-detail="'+esc(j.id)+'"'+(expandedId===j.id?'':' hidden')+'>'+
-    '<td colspan="5"><div class="steps-head">Pipeline koraci</div>'+
-    '<div id="steps-'+esc(j.id)+'"><div class="steps-loading">Učitavam korake…</div></div></td></tr>';
+    '<td colspan="5"><div class="steps-head">Pipeline koraci'+
+    ' <button class="pillbtn files-btn" data-filesjob="'+esc(j.id)+'" aria-expanded="'+(fOpen?'true':'false')+'" style="margin-left:.5rem;" title="Sve datoteke ovog videa na CDN-u">📁 datoteke</button></div>'+
+    '<div id="steps-'+esc(j.id)+'"><div class="steps-loading">Učitavam korake…</div></div>'+
+    '<div id="files-'+esc(j.id)+'"'+(fOpen?'':' hidden')+'></div></td></tr>';
 }
 function stepBadge(st){ return st==='done'?'gotovo':st==='skipped'?'preskočeno':'čeka'; }
 function stepGlyph(st){ return st==='done'?'✓':st==='skipped'?'–':''; }
@@ -244,8 +247,62 @@ async function loadSteps(id){
     host.innerHTML = renderSteps(data.steps, data.timing);
   } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; }
 }
+// ── CDN datoteke joba (lazy, /api/v1/jobs/:id/files) ──
+// Cache renderiranog HTML-a po jobu: refresh() svakih 10s re-rendera retke pa
+// otvoreni panel obnavljamo iz cachea bez ponovnog fetcha (sadržaj se rijetko mijenja).
+var filesOpen = false;
+var filesCache = {};
+function fmtSize(b){
+  if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
+  if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
+  if (b >= 1024) return Math.round(b/1024)+' KB';
+  return b+' B';
+}
+function renderFiles(data){
+  var out = '';
+  (data.groups||[]).forEach(function(g){
+    var tot = 0; (g.files||[]).forEach(function(f){ tot += f.size; });
+    out += '<div class="steps-head" style="margin-top:.8rem;">'+esc(g.label)+
+      ' <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:600;">· '+g.files.length+' · '+fmtSize(tot)+'</span></div>';
+    if (!g.files.length) { out += '<div class="steps-loading">Nema datoteka.</div>'; return; }
+    out += g.files.map(function(f){
+      var rel = f.key.slice(g.prefix.length);
+      var when = f.uploaded ? new Date(f.uploaded).toLocaleString('hr-HR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+      return '<div style="padding:.15rem 0;overflow-wrap:anywhere;"><a class="mono" href="'+esc(data.cdn_base+'/'+f.key)+'" target="_blank" rel="noopener">'+esc(rel)+'</a>'+
+        ' <span class="dim" style="white-space:nowrap;">— '+fmtSize(f.size)+(when?' · '+when:'')+'</span></div>';
+    }).join('');
+  });
+  return out || '<div class="steps-loading">Nema datoteka na CDN-u.</div>';
+}
+async function loadFiles(id){
+  var host = document.getElementById('files-'+id);
+  if (!host) return;
+  if (filesCache[id]) { host.innerHTML = filesCache[id]; return; }
+  host.innerHTML = '<div class="steps-loading">Učitavam datoteke…</div>';
+  try {
+    var r = await fetch('/api/v1/jobs/'+id+'/files', { headers: H });
+    if (!r.ok) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu datoteka.</div>'; return; }
+    var data = await r.json();
+    filesCache[id] = renderFiles(data);
+    host.innerHTML = filesCache[id];
+  } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu datoteka.</div>'; }
+}
+function toggleFiles(id){
+  if (expandedId !== id) return;
+  filesOpen = !filesOpen;
+  var host = document.getElementById('files-'+id);
+  if (host) host.hidden = !filesOpen;
+  document.querySelectorAll('button.files-btn').forEach(function(b){
+    b.setAttribute('aria-expanded', (filesOpen && b.dataset.filesjob===id)?'true':'false');
+  });
+  if (filesOpen) loadFiles(id);
+}
 function toggleSteps(id){
   expandedId = (expandedId===id) ? '' : id;
+  // Zatvaranje/promjena retka resetira files panel (inače bi stari sadržaj ostao vidljiv).
+  filesOpen = false;
+  document.querySelectorAll('div[id^="files-"]').forEach(function(d){ d.hidden = true; });
+  document.querySelectorAll('button.files-btn').forEach(function(b){ b.setAttribute('aria-expanded','false'); });
   document.querySelectorAll('tr.detail-row').forEach(function(tr){ tr.hidden = tr.dataset.detail!==expandedId; });
   document.querySelectorAll('button.pillbtn').forEach(function(b){
     var on = b.dataset.jobid===expandedId;
@@ -287,6 +344,7 @@ async function refresh(){
     document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5" class="empty">Još nema obrada. Pošalji prvu gore.</td></tr>';
     document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');
     if (expandedId && document.getElementById('steps-'+expandedId)) loadSteps(expandedId);
+    if (expandedId && filesOpen && document.getElementById('files-'+expandedId)) loadFiles(expandedId);
   } catch(e) {}
 }
 
@@ -339,6 +397,9 @@ document.getElementById('rows').addEventListener('click', function(e){
   if (mb) { runMagisterium(mb.dataset.mag, mb.dataset.lang); return; }
   var pb = e.target.closest('button.prio-btn');
   if (pb) { prioritize(pb.dataset.prio); return; }
+  // Files gumb PRIJE generičkog pillbtn — dijeli klasu, ali nema data-jobid.
+  var fb = e.target.closest('button.files-btn');
+  if (fb) { toggleFiles(fb.dataset.filesjob); return; }
   var tog = e.target.closest('button.pillbtn');
   if (tog && tog.dataset.jobid) toggleSteps(tog.dataset.jobid);
 });

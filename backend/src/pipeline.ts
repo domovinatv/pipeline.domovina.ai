@@ -362,3 +362,39 @@ export async function buildPipelineReport(
     steps,
   };
 }
+
+// ── Live listing CDN artefakata jednog videa iz R2 bindinga ─────────────────
+// Dijele ga /admin/jobs/:id/files i scope-ani /api/v1/jobs/:id/files. Javni R2
+// bucket nema directory listing, a curated PIPELINE_STEPS probe ne vide
+// neočekivane/buduće datoteke — binding je jedini potpun pogled na CDN.
+
+export interface CdnFileGroup {
+  label: string;
+  prefix: string;
+  files: { key: string; size: number; uploaded: string }[];
+}
+
+export async function listCdnFiles(bucket: R2Bucket, youtubeId: string): Promise<CdnFileGroup[]> {
+  // Dvije CDN zone istog videa (data = JSON/SRT/media, images = thumbnaili/
+  // screenshotovi/OG). Cursor petlja jer screenshotova + OG sličica zna biti
+  // preko default page sizea.
+  const zones = [
+    { label: 'Podaci (data/)', prefix: `data/${youtubeId}/` },
+    { label: 'Slike (images/)', prefix: `images/${youtubeId}/` },
+  ];
+  const groups: CdnFileGroup[] = [];
+  for (const zone of zones) {
+    const files: CdnFileGroup['files'] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await bucket.list({ prefix: zone.prefix, cursor, limit: 1000 });
+      for (const o of page.objects) {
+        files.push({ key: o.key, size: o.size, uploaded: o.uploaded.toISOString() });
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    files.sort((a, b) => a.key.localeCompare(b.key));
+    groups.push({ ...zone, files });
+  }
+  return groups;
+}

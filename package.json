@@ -1,0 +1,28 @@
+{
+  "name": "pipeline.domovina.ai",
+  "version": "1.0.0",
+  "description": "Queue servis za **ad-hoc obradu proizvoljnog (i unlisted) YouTube videa** kroz puni DOMOVINA AI pipeline. Pošalješ YouTube URL/ID kroz mali admin dashboard → video se obradi **identično** kao katalog (transkripcija → diarizacija → sažetak → članak → RAG → screenshots → Magisterium → CDN), ali ostaje **neindeksiran**: dostupan samo na privatnom `https://domovina.ai/v/{id}` (kao YouTube unlisted).",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/domovinatv/pipeline.domovina.ai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/domovinatv/pipeline.domovina.ai/issues"
+  },
+  "homepage": "https://github.com/domovinatv/pipeline.domovina.ai#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "puppeteer": "^25.6.0"
+  }
+}

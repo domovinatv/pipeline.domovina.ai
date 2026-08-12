@@ -4,6 +4,8 @@
 .env.*
 *.pem
 secrets/
+.magisterium_token
+.magisterium_cookies.txt
 
 # --- Cloudflare / Node ---
 .wrangler/

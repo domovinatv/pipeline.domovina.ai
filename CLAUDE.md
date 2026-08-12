@@ -37,4 +37,18 @@ npm run deploy              # wrangler deploy
   --unlisted-url`, `_`-kanal mehanizam). Ovaj repo NE obrađuje video, samo orkestrira queue.
 - **Billing**: `price_cents`/`paid`/`api_keys` su SKELA — postoje ali nisu ožičeni.
   Ne uključuj naplatu bez eksplicitne odluke (plan: spoj na pay.domovina.ai intents).
+
+## MCP Proxy Bridgeovi
+
+Ovaj repo sadrži **stdio ↔ remote** MCP proxy bridgeove za AI coding alate:
+
+- **`domovina-mcp.mjs`** — Domovina MCP (`mcp.domovina.ai`) preko OAuth 2.1 + DCR + PKCE.
+  Headless flow: registrira klijenta, intercepta 302 redirect za auth code, razmijeni za token.
+  **NIKAD** ne koristiti sirovi `MCP_API_KEY` za produkciju — seedan je samo u lokalnu PG bazu.
+- **`magisterium-mcp.mjs`** — Magisterium AI preko A2A endpointa. Supabase Bearer token iz
+  `.magisterium_token`. Za obnovu tokena: `node parse-cookies.mjs`.
+- **Konfiguracija:** `~/.gemini/config/mcp_config.json` (Antigravity CLI) ili
+  `~/Library/Application Support/Claude/claude_desktop_config.json` (Claude Desktop).
+
+Detaljna dokumentacija: `docs/MCP_BRIDGES.md`.
 ```

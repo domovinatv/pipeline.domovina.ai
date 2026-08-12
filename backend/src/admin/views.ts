@@ -212,7 +212,8 @@ h1 { font-size: 1.4rem; font-weight: 800; letter-spacing: -.01em; color: var(--n
    scroll umjesto kropanja. Naslov je jedini stupac koji smije rasti. */
 td[data-l="Akcije"], th.col-akcije { min-width: 23rem; }
 td[data-l="Naslov"] { min-width: 18rem; }
-td[data-l="Video"], td[data-l="Dodano"], td[data-l="Status"], td[data-l="Rezultat"] { white-space: nowrap; }
+td[data-l="Video"], td[data-l="Dodano"], td[data-l="Status"] { white-space: nowrap; }
+td[data-l="Rezultat"] { white-space: normal; word-break: break-word; min-width: 8rem; }
 /* Gumbi i selecti u jednom retku, s urednim prelomom kad ponestane mjesta. */
 td[data-l="Akcije"] .actwrap { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
 td[data-l="Akcije"] .actwrap .act { margin: 0; }

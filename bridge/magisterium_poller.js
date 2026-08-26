@@ -95,6 +95,30 @@ async function artifactExists(youtubeId, lang) {
   }
 }
 
+// ─── CLAUDE PROZOR KVOTE ──────────────────────────────────────────────────────
+// Pita dijeljeni `claude-window` arbitar (repo stepanic/launchd-menubar,
+// tools/claude-window, symlinkan u ~/.local/bin) smije li se sada zvati `claude`.
+// Politika i testovi su tamo — ovdje je samo poziv. Aktivno uz CLAUDE_WINDOW_GUARD=1
+// (postavlja ga automatic/magisterium_pipeline.sh); ručni runovi rade bez ograde.
+const CLAUDE_WINDOW_BIN = process.env.CLAUDE_WINDOW_BIN || 'claude-window';
+let claudeWindowLastReason = '';
+
+function claudeWindowClosed() {
+  if (process.env.CLAUDE_WINDOW_GUARD !== '1') return false;
+  const r = spawnSync(CLAUDE_WINDOW_BIN, ['check'], { encoding: 'utf-8' });
+  // Arbitar nedostupan → propusti posao. Gore je da poller stane jer symlink fali.
+  if (r.error || typeof r.status !== 'number') {
+    console.error(`  ⚠️ claude-window nedostupan (${r.error ? r.error.message : 'nepoznat status'}) — propuštam`);
+    return false;
+  }
+  claudeWindowLastReason = (r.stderr || '').replace(/^claude-window:\s*/, '').trim();
+  return r.status === 10;
+}
+
+function claudeWindowReason() {
+  return claudeWindowLastReason || 'prozor zatvoren';
+}
+
 // Pokreni hibridni Magisterium MCP runbook headless preko Claude Code CLI. EN se traži samo
 // eksplicitno (runbook default = HR-only). Vrati true ako je CLI izašao bez fatalne greške
 // (svejedno se oslanjamo na CDN verifikaciju kao izvor istine, ne na exit kod).
@@ -127,6 +151,15 @@ function runRunbook(youtubeId, lang, model) {
       console.log(`  • ${j.youtube_id} [${j.lang}] → cd ${FETCH_REPO} && ${CLAUDE_BIN} --model ${modelFor(j)} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}${j.lang === 'en' ? ' +EN' : ''}"`);
     }
     return;
+  }
+
+  // Claude prozor kvote: poller tikca svakih 10 min, 24/7, pa bi runbook mogao
+  // otvoriti nov 5h prozor u npr. 07:50 i pojesti kvotu prije nego korisnik sjedne
+  // u 08:30. Provjera ide PRIJE claima — claimane jobove ne želimo ostaviti visjeti.
+  // Preko dana arbitar propušta (granica 08:30 je tek sutra), pa ovo ne usporava
+  // ad-hoc zahtjeve; blokira samo ~03:20–08:30. Vidi launchd-menubar/SCHEDULING.md.
+  if (claudeWindowClosed()) {
+    return console.log(`⏸️  Claude prozor: ${claudeWindowReason()} — preskačem tick.`);
   }
 
   const { jobs } = await api('POST', '/api/magisterium/claim', { max: MAG_MAX });

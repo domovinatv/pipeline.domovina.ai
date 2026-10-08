@@ -52,3 +52,6 @@ Ovaj repo sadrži **stdio ↔ remote** MCP proxy bridgeove za AI coding alate:
 
 Detaljna dokumentacija: `docs/MCP_BRIDGES.md`.
 ```
+
+Ponovna obrada / Speechmatics za prioritetne (v0.17.0) i ugovor prema fetch strani:
+`docs/2026-10-08-ponovna-obrada.md`.

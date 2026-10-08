@@ -138,3 +138,4 @@ promijenio. Zato:
 - `bridge/plan.js` — ugovor prema fetch strani
 - `docs/UI.md` — UI konvencije admina
 - `../fetch.domovina.tv/docs/2026-10-06-words-json-titlovi.md` — words.json
+- `../fetch.domovina.tv/docs/2026-10-09-ponovna-obrada-epizode.md` — fetch strana: stash/KORAK 12.1/--replace, 5 zamki s testa na 6e1MW97dv10, mjerenja

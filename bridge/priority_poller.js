@@ -95,7 +95,8 @@ function readMeta(youtubeId) {
   // Što fetch strana podržava (ugovor u plan.js). Čita se iz izvora, jer je fetch repo
   // radno stablo (bez verzija) — provjera PRIJE claimanog runa, ne nakon plaćenih koraka.
   const caps = {
-    replace: sourceHas(path.join(FETCH_REPO, 'auto_reuse_adhoc.js'), "'--replace'"),
+    replace: sourceHas(path.join(FETCH_REPO, 'auto_reuse_adhoc.js'), '"--replace"'),
+    reprocess: sourceHas(RUN_PIPELINE, '"--reprocess"'),
     reprocessArticle: sourceHas(RUN_PIPELINE, '"--reprocess-article"'),
   };
   for (const job of jobs) {

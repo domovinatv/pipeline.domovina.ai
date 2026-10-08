@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { planFor } = require('./plan');
 
-const ALL = { replace: true, reprocessArticle: true };
+const ALL = { replace: true, reprocess: true, reprocessArticle: true };
 const base = {
   youtube_id: '6e1MW97dv10',
   youtube_url: 'https://www.youtube.com/watch?v=6e1MW97dv10',
@@ -58,7 +58,7 @@ test('ponovna obrada s prijepisom: reuse s --replace', () => {
 });
 
 test('ponovna obrada bez fetch --replace: greška PRIJE runa', () => {
-  const p = planFor({ ...base, reprocess: 1 }, { replace: false, reprocessArticle: true });
+  const p = planFor({ ...base, reprocess: 1 }, { replace: false, reprocess: true, reprocessArticle: true });
   assert.match(p.error, /--replace/);
   assert.deepEqual(p.args, []);
 });
@@ -68,7 +68,7 @@ test('ponovna obrada samo članka', () => {
   assert.equal(p.mode, 'article-only');
   assert.deepEqual(p.args, ['--reprocess-article', '6e1MW97dv10', '--gemini-backend', 'claude']);
   assert.deepEqual(p.env, { CLAUDE_MODEL: 'opus' });
-  const missing = planFor({ ...base, reprocess: 1, transcription: 'none' }, { replace: true, reprocessArticle: false });
+  const missing = planFor({ ...base, reprocess: 1, transcription: 'none' }, { replace: true, reprocess: true, reprocessArticle: false });
   assert.match(missing.error, /--reprocess-article/);
 });
 
@@ -76,4 +76,21 @@ test('ponovna obrada samo Magisteriuma: bez runa', () => {
   const p = planFor({ ...base, reprocess: 1, transcription: 'none', redo_article: 0 }, { replace: false, reprocessArticle: false });
   assert.equal(p.mode, 'none');
   assert.equal(p.error, null);
+});
+
+test('ponovna obrada s prijepisom: run_pipeline dobiva --reprocess', () => {
+  const p = planFor({ ...base, reprocess: 1, transcription: 'speechmatics' }, ALL);
+  assert.equal(p.error, null);
+  assert.ok(p.args.includes('--reprocess'));
+  assert.ok(p.args.includes('--with-speechmatics'));
+});
+
+test('obična (ne-reprocess) obrada: bez --reprocess', () => {
+  const p = planFor(base, ALL);
+  assert.ok(!p.args.includes('--reprocess'));
+});
+
+test('ponovna obrada bez fetch --reprocess: greška PRIJE runa', () => {
+  const p = planFor({ ...base, reprocess: 1 }, { replace: true, reprocess: false, reprocessArticle: true });
+  assert.match(p.error, /--reprocess/);
 });

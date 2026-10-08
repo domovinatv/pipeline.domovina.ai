@@ -19,6 +19,9 @@
  *       stare preimenuj u .bak (nikad delete), reindex, pa prisilno uploadaj diarized.srt +
  *       words.json + article/summary/outline s purgeom — SRT i words.json na CDN-u nikad iz
  *       različitih prolaza. Bez --replace ponašanje ostaje no-op kao danas.
+ *   • run_pipeline.sh --reprocess  (uz --modal-only): PRIJE runa skloni stare izvedene
+ *       fajlove iz _unlisted (inače 2.8 ne promovira novi prijepis jer stari postoji, a 7+8
+ *       preskoče postojeći članak), a nakon KORAKA 12 prisilno prepiše immutable CDN ključeve.
  *   • run_pipeline.sh --reprocess-article <id>  (vidi article-only gore)
  * Dok fetch strana nema ove zastavice, plan vrati `error` i job odmah ide u failed — PRIJE
  * ikakvog plaćenog koraka, umjesto da run prođe i tiho ostavi stari CDN.
@@ -27,7 +30,7 @@ const LLM_BACKENDS = ['vertex', 'cli', 'claude', 'agy'];
 
 /**
  * @param {object} job   red iz /api/jobs/claim
- * @param {{replace: boolean, reprocessArticle: boolean}} caps  što fetch strana podržava
+ * @param {{replace: boolean, reprocess: boolean, reprocessArticle: boolean}} caps  što fetch strana podržava
  * @returns {{mode: 'pipeline'|'article-only'|'none', args: string[], env: object,
  *            reuseArgs: string[]|null, error: string|null}}
  */
@@ -61,6 +64,12 @@ function planFor(job, caps) {
       error: 'fetch.domovina.tv još nema auto_reuse_adhoc.js --replace (prepis channel dira + CDN-a) — nije ništa pokrenuto',
     };
   }
+  if (reprocess && !caps.reprocess) {
+    return {
+      ...plan,
+      error: 'fetch.domovina.tv još nema run_pipeline.sh --reprocess (sklanjanje stare obrade + prisilni CDN prepis) — nije ništa pokrenuto',
+    };
+  }
 
   plan.args = [
     '--unlisted-url', job.youtube_url,
@@ -76,6 +85,9 @@ function planFor(job, caps) {
     // .wav.canary.diarized.srt → pyannote (6) se preskoči, a 9.87 napravi words.json.
     // Fetch strana scope-a 2.7/2.8 na --modal-only video, bez prozora svježine.
     ...(transcription === 'speechmatics' ? ['--with-speechmatics', '--gemini-refine-promote'] : []),
+    // Ponovna obrada: fetch strana skloni staru _unlisted obradu prije runa i nakon
+    // KORAKA 12 prisilno prepiše diarized.srt + words.json (+ članak, epub) na CDN-u.
+    ...(reprocess ? ['--reprocess'] : []),
   ];
   // Auto-reuse u channel dir (best-effort za nove videe; za ponovnu obradu OBAVEZAN prepis).
   plan.reuseArgs = ['--video-id', job.youtube_id, ...(reprocess ? ['--replace'] : [])];

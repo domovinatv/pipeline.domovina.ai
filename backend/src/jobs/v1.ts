@@ -14,8 +14,16 @@ import {
   prioritizeJob,
   touchApiKey,
 } from '../db';
-import { MAGISTERIUM_LANGS } from '../types';
-import { extractSourceRef, fetchOEmbed, sha256Hex } from '../util';
+import { DEFAULT_TRANSCRIPTION, MAGISTERIUM_LANGS, parseTranscription } from '../types';
+import { cleanTitle, extractSourceRef, fetchOEmbed, sha256Hex } from '../util';
+
+// Krediti po tieru. Speechmatics + Gemini sluh košta ~$2-2.5/ep naspram ~$0.01 za Canary,
+// pa prioritetni job s njim rezervira 2 kredita više. Standardni job ide kroz nightly
+// (globalna konfiguracija) pa za njega izbor transkripcije ne mijenja cijenu.
+const STANDARD_COST = 1;
+function priorityCost(transcription: string): number {
+  return transcription === 'speechmatics' ? 5 : 3;
+}
 import { buildPipelineReport, isPublishedOnDomovina, listCdnFiles, reconcilePublishedJobs } from '../pipeline';
 
 // Javni programatski API (SaaS klijenti). Auth = per-key Bearer (≠ bridge INGEST_KEY).
@@ -43,13 +51,18 @@ publicApi.post('/jobs', async (c) => {
     youtube_id?: string;
     title?: string;
     tier?: string;
+    transcription?: string; // 'speechmatics' (default, kao nightly) | 'canary'
   };
   const ref = await extractSourceRef(body.url || body.youtube_id || '');
   if (!ref) return c.json({ error: 'Neispravan YouTube/X URL/ID' }, 400);
   const youtubeId = ref.id;
-  // Tier: 'priority' = Modal instant (3 kredita), inače standard (1 kredit, noćni Colab bulk).
+  // Tier: 'priority' = Modal instant (5 kredita sa Speechmatics, 3 samo Canary), inače
+  // standard (1 kredit, noćni bulk). Nepoznata transkripcija → 400, ne tihi default.
   const priority = body.tier === 'priority' ? 1 : 0;
-  const cost = priority ? 3 : 1;
+  const transcription = body.transcription == null ? DEFAULT_TRANSCRIPTION : parseTranscription(body.transcription);
+  if (!transcription) return c.json({ error: "transcription mora biti 'speechmatics' ili 'canary'" }, 400);
+  const cost = priority ? priorityCost(transcription) : STANDARD_COST;
+  const title = cleanTitle(body.title ?? '', body.url || body.youtube_id || '');
 
   // Dedup: već aktivan job za isti video → vrati ga, NE naplaćuj.
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
@@ -72,7 +85,7 @@ publicApi.post('/jobs', async (c) => {
         youtubeUrl: ref.url,
         sourcePlatform: ref.source,
         sourceUrl: ref.url,
-        title: body.title || meta?.title || null,
+        title: title || meta?.title || null,
         channel: meta?.channel ?? null,
         apiKeyId: key.id,
         detailUrl,
@@ -100,18 +113,23 @@ publicApi.post('/jobs', async (c) => {
     youtubeUrl: ref.url,
     sourcePlatform: ref.source,
     sourceUrl: ref.url,
-    title: body.title || meta?.title || null,
+    title: title || meta?.title || null,
     channel: meta?.channel ?? null,
     source: ref.source === 'x' ? 'x-api' : 'api',
     apiKeyId: key.id,
     priceCents,
     priority,
     creditCost: cost,
+    transcription,
   });
-  return c.json({ job, tier: priority ? 'priority' : 'standard', credits_remaining: key.credits - cost }, 201);
+  return c.json(
+    { job, tier: priority ? 'priority' : 'standard', transcription, credits_remaining: key.credits - cost },
+    201,
+  );
 });
 
-// "Forsiraj sada": digni vlastiti queued standard job na prioritet. Naplati razliku (3−1=2).
+// "Forsiraj sada": digni vlastiti queued standard job na prioritet. Naplati razliku
+// prioritet − standard (5−1=4 sa Speechmatics, 3−1=2 samo Canary).
 publicApi.post('/jobs/:id/prioritize', async (c) => {
   const key = c.get('apiKey');
   const job = await getJob(c.env.DB, c.req.param('id'));
@@ -120,11 +138,12 @@ publicApi.post('/jobs/:id/prioritize', async (c) => {
   if (job.state !== 'queued') {
     return c.json({ error: 'Job je već krenuo u obradu — ne može se forsirati.' }, 409);
   }
-  const UPGRADE_COST = 2; // razlika prioritet(3) − standard(1)
+  const target = priorityCost(job.transcription);
+  const UPGRADE_COST = target - job.credit_cost;
   if (!(await consumeApiKeyCredits(c.env.DB, key.id, UPGRADE_COST))) {
     return c.json({ error: 'Nema dovoljno kredita', credits_remaining: key.credits, required: UPGRADE_COST }, 402);
   }
-  const ok = await prioritizeJob(c.env.DB, job.id, key.id, 3);
+  const ok = await prioritizeJob(c.env.DB, job.id, key.id, target);
   if (!ok) {
     // Job je promijenio stanje između čitanja i UPDATE-a → vrati kredite (best-effort).
     await addApiKeyCredits(c.env.DB, key.id, UPGRADE_COST);

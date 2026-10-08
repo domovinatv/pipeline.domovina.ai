@@ -121,3 +121,14 @@ export function escapeHtml(s: unknown): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
+// Naslov iz forme → null ako je prazan ili je zapravo URL (isti kao uneseni URL, ili bilo
+// što što počinje shemom / youtu(.)be / x.com). Ograda protiv naslova tipa
+// "https://www.youtube.com/watch?v=…" koji bi postao ime datoteke u pipelineu.
+export function cleanTitle(title: string, rawUrl: string): string | null {
+  const t = title.trim();
+  if (!t) return null;
+  if (t === rawUrl.trim()) return null;
+  if (/^(https?:\/\/|www\.|youtu\.?be|(m\.)?youtube\.com|(twitter|x)\.com\/)/i.test(t)) return null;
+  return t;
+}

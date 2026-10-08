@@ -31,8 +31,8 @@ import {
   updateJob,
 } from '../db';
 import type { DiscoveredRow } from '../types';
-import { parseArticleModel, parseMagisteriumModel } from '../types';
-import { extractSourceRef, fetchOEmbed } from '../util';
+import { DEFAULT_TRANSCRIPTION, articleModelValue, parseArticleModel, parseMagisteriumModel, parseTranscription } from '../types';
+import { cleanTitle, extractSourceRef, fetchOEmbed } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, listCdnFiles, reconcilePublishedJobs } from '../pipeline';
 import {
   layout,
@@ -64,9 +64,19 @@ admin.get('/', (c) => c.html(renderJobsPage()));
 admin.post('/jobs', async (c) => {
   const form = await c.req.parseBody();
   const raw = String(form.url ?? '').trim();
-  const title = String(form.title ?? '').trim() || null;
+  // Naslov koji je zapravo URL (zalijepljen u krivo polje / browser autofill) tretiraj kao
+  // prazan: inače se oEmbed preskoči, a pipeline po --unlisted-title imenuje datoteke
+  // `…_https_www_youtube_com_watch_v_…`. Bridge pravi naslov backfilla tek NAKON fetcha.
+  const title = cleanTitle(String(form.title ?? ''), raw);
   const force = String(form.force ?? '') === '1'; // "svejedno dodaj" iz potvrdne stranice
   const priority = String(form.priority ?? '') === '1' ? 1 : 0; // admin prioritet (besplatno)
+  // Ponovna obrada već objavljene epizode — dolazi SAMO s potvrdne stranice (force=1).
+  const reprocess = force && String(form.reprocess ?? '') === '1';
+  // Transkripcija (prioritetni fast-path): nepoznata/izostavljena → default (kao nightly).
+  // 'none' (ne diraj prijepis) smije samo ponovna obrada.
+  const transcription = parseTranscription(String(form.transcription ?? ''), reprocess) ?? DEFAULT_TRANSCRIPTION;
+  // Novi prijepis UVIJEK povlači novi članak; „ne diraj članak" vrijedi samo uz 'none'.
+  const redoArticle = !reprocess || transcription !== 'none' || String(form.article_mode ?? '') !== 'keep';
   // Magisterium checkbox: `mag_present` hidden polje označava da forma nosi checkbox (unchecked
   // checkbox ne šalje ništa). Bez tog polja (stari/programatski POST) → default UKLJUČENO.
   const withMagisterium = String(form.mag_present ?? '') === '1' ? String(form.with_magisterium ?? '') === '1' : true;
@@ -84,6 +94,23 @@ admin.post('/jobs', async (c) => {
     );
   }
   const youtubeId = ref.id;
+  const already = (error?: string) =>
+    renderAlreadyPublishedPage({
+      youtubeId,
+      siteBase: c.env.SITE_BASE || 'https://domovina.ai',
+      rawUrl: raw,
+      title,
+      priority,
+      transcription,
+      withMagisterium,
+      articleModel: String(form.article_model ?? ''),
+      magisteriumModel: String(form.magisterium_model ?? ''),
+      source: ref.source,
+      error,
+    });
+  if (reprocess && transcription === 'none' && !redoArticle && !withMagisterium) {
+    return c.html(already('Ništa nije odabrano — izaberi barem prijepis, članak ili Magisterium.'), 400);
+  }
   // Dedup 1: već postoji aktivan job za isti video u NAŠEM queueu.
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
   if (existing) return c.redirect('/admin', 303);
@@ -95,18 +122,7 @@ admin.post('/jobs', async (c) => {
   if (!force) {
     const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
     if (await isPublishedOnDomovina(cdnBase, youtubeId)) {
-      return c.html(
-        renderAlreadyPublishedPage({
-          youtubeId,
-          siteBase: c.env.SITE_BASE || 'https://domovina.ai',
-          rawUrl: raw,
-          title,
-          withMagisterium,
-          articleModel: String(form.article_model ?? ''),
-          magisteriumModel: String(form.magisterium_model ?? ''),
-          source: ref.source,
-        }),
-      );
+      return c.html(already());
     }
   }
 
@@ -121,14 +137,36 @@ admin.post('/jobs', async (c) => {
     channel: meta?.channel ?? null,
     source: ref.source === 'x' ? 'x-admin' : 'admin',
     priceCents: 0,
-    priority,
-    creditCost: priority ? 3 : 1,
+    // Ponovna obrada uvijek ide prioritetnim putem — samo on poštuje izbore po videu.
+    priority: reprocess ? 1 : priority,
+    creditCost: priority || reprocess ? 3 : 1,
     withMagisterium,
     llmBackend: article?.backend,
     llmModel: article?.model,
     magisteriumModel: magModel,
+    transcription,
+    reprocess,
+    redoArticle,
   });
   return c.redirect('/admin', 303);
+});
+
+// „🔁 Ponovna obrada" s done retka: ista forma kao potvrdna stranica, popunjena izborima joba.
+admin.get('/reprocess/:id', async (c) => {
+  const job = await getJob(c.env.DB, c.req.param('id'));
+  if (!job) return c.text('Job ne postoji.', 404);
+  return c.html(
+    renderAlreadyPublishedPage({
+      youtubeId: job.youtube_id,
+      siteBase: c.env.SITE_BASE || 'https://domovina.ai',
+      rawUrl: job.source_url || job.youtube_url,
+      title: job.title,
+      withMagisterium: true,
+      articleModel: articleModelValue(job.llm_backend, job.llm_model),
+      magisteriumModel: job.magisterium_model ?? undefined,
+      source: job.source_platform === 'x' ? 'x' : 'youtube',
+    }),
+  );
 });
 
 // Admin akcije po jobu (poziva ih tablica preko fetch-a; Basic Auth se nasljeđuje).

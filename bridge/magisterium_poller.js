@@ -83,13 +83,18 @@ function artifactName(lang) {
 }
 
 // Postoji li artefakt? GET s Range bytes=0-0 (ne HEAD — Cloudflare cache-ira 404 po točnom URL-u).
-async function artifactExists(youtubeId, lang) {
+// Uz `since` (unix s) vrijedi samo artefakt objavljen NAKON toga (Last-Modified) — za force
+// zahtjeve (ponovna obrada), gdje stari Magisterium na CDN-u nije signal uspjeha.
+async function artifactExists(youtubeId, lang, since = 0) {
   try {
-    const r = await fetch(`${CDN_BASE}/data/${youtubeId}/${artifactName(lang)}`, {
+    const r = await fetch(`${CDN_BASE}/data/${youtubeId}/${artifactName(lang)}${since ? '?x=' + Date.now() : ''}`, {
       method: 'GET',
       headers: { Range: 'bytes=0-0' },
     });
-    return r.ok || r.status === 206;
+    if (!(r.ok || r.status === 206)) return false;
+    if (!since) return true;
+    const lm = Date.parse(r.headers.get('last-modified') || '');
+    return Number.isFinite(lm) && Math.floor(lm / 1000) >= since;
   } catch {
     return false;
   }
@@ -122,8 +127,11 @@ function claudeWindowReason() {
 // Pokreni hibridni Magisterium MCP runbook headless preko Claude Code CLI. EN se traži samo
 // eksplicitno (runbook default = HR-only). Vrati true ako je CLI izašao bez fatalne greške
 // (svejedno se oslanjamo na CDN verifikaciju kao izvor istine, ne na exit kod).
-function runRunbook(youtubeId, lang, model) {
-  const suffix = lang === 'en' ? ' +EN' : '';
+function runRunbook(youtubeId, lang, model, force) {
+  // force: ponovna obrada — runbook ne smije stati na "artefakt već postoji", a upload mora
+  // prepisati immutable ključ (force_upload.js --targets magisterium, s purgeom).
+  const suffix = (lang === 'en' ? ' +EN' : '') +
+    (force ? ' --force (ponovna obrada: regeneriraj iako Magisterium već postoji — članak je nov; na kraju force_upload.js --targets magisterium)' : '');
   const prompt = `@docs/MAGISTERIUM_MCP_RUN.md ${youtubeId}${suffix}`;
   const args = ['-p', prompt];
   const useModel = model || CLAUDE_MODEL;
@@ -171,7 +179,9 @@ function runRunbook(youtubeId, lang, model) {
     console.log(`\n→ 🕊 ${tag} (${job.id})`);
 
     // 1) Već obrađeno? (auto-enqueue znatno češće pogodi ovo nego admin gumb.)
-    if (await artifactExists(job.youtube_id, job.lang)) {
+    //    Force (ponovna obrada) preskače ovu provjeru — stari artefakt je upravo ono što mijenjamo.
+    const since = job.force ? job.claimed_at || Math.floor(Date.now() / 1000) : 0;
+    if (!job.force && (await artifactExists(job.youtube_id, job.lang))) {
       await api('PATCH', `/api/magisterium/${job.id}`, { state: 'done' });
       console.log(`  ✅ artefakt već na CDN-u → done (preskočen run)`);
       continue;
@@ -180,10 +190,10 @@ function runRunbook(youtubeId, lang, model) {
     // 2) Pokreni runbook headless — modelom koji nosi sam zahtjev (admin izbor po videu).
     const model = modelFor(job);
     console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${model} -p …) — može potrajati ~14 min…`);
-    runRunbook(job.youtube_id, job.lang, model);
+    runRunbook(job.youtube_id, job.lang, model, job.force);
 
-    // 3) Verificiraj po CDN-u (izvor istine, ne exit kod).
-    if (await artifactExists(job.youtube_id, job.lang)) {
+    // 3) Verificiraj po CDN-u (izvor istine, ne exit kod). Za force: samo NOVIJI od claima.
+    if (await artifactExists(job.youtube_id, job.lang, since)) {
       await api('PATCH', `/api/magisterium/${job.id}`, { state: 'done' });
       console.log(`  ✅ ${artifactName(job.lang)} live na CDN-u → done`);
     } else {

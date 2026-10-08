@@ -17,19 +17,29 @@ import {
   ARTICLE_MODELS,
   DEFAULT_ARTICLE_MODEL,
   DEFAULT_MAGISTERIUM_MODEL,
+  DEFAULT_TRANSCRIPTION,
   MAGISTERIUM_MODELS,
+  TRANSCRIPTION_OPTIONS,
 } from '../types';
 import { escapeHtml } from '../util';
 
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.15.0';
+export const APP_VERSION = 'v0.17.0';
 
 // <option> lista za izbor modela koraka 7+8. Katalog je jedan (types.ts) — UI ga samo
 // renderira, pa se nova/uklonjena opcija ne mora održavati na dva mjesta.
 function articleModelOptions(selected: string): string {
   return ARTICLE_MODELS.map(
+    (o) =>
+      `<option value="${escapeHtml(o.value)}"${o.value === selected ? ' selected' : ''}>${escapeHtml(o.label)}</option>`,
+  ).join('');
+}
+
+// <option> lista za izbor transkripcije (prioritetni fast-path). Katalog u types.ts.
+function transcriptionOptions(selected: string): string {
+  return TRANSCRIPTION_OPTIONS.map(
     (o) =>
       `<option value="${escapeHtml(o.value)}"${o.value === selected ? ' selected' : ''}>${escapeHtml(o.label)}</option>`,
   ).join('');
@@ -56,7 +66,12 @@ const MODEL_CATALOG_JSON = JSON.stringify({
     hint: o.hint,
   })),
   magisterium: MAGISTERIUM_MODELS,
-  defaults: { article: DEFAULT_ARTICLE_MODEL, magisterium: DEFAULT_MAGISTERIUM_MODEL },
+  transcription: TRANSCRIPTION_OPTIONS,
+  defaults: {
+    article: DEFAULT_ARTICLE_MODEL,
+    magisterium: DEFAULT_MAGISTERIUM_MODEL,
+    transcription: DEFAULT_TRANSCRIPTION,
+  },
 });
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
@@ -521,18 +536,22 @@ try { if (localStorage.getItem('dtvWidth') === 'contained') document.documentEle
 }
 
 // Potvrdna stranica kad se dodaje epizoda koja je VEĆ objavljena na domovina.ai
-// (CDN artefakt članka postoji, iako u našem queueu nema aktivnog joba). Ne
-// queueamo tiho duplikat — pokažemo link na postojeću epizodu + escape hatch
-// "svejedno dodaj" (POST natrag s force=1) ako admin ipak želi ponovnu obradu.
+// (CDN artefakt članka postoji). Ne queueamo tiho duplikat — pokažemo link na postojeću
+// epizodu i formu „Ponovna obrada" s izborima ŠTO se radi (paritet s ručnim radom iz
+// fetch.domovina.tv sesije). Ista stranica je i akcija „🔁 Ponovna obrada" na done retku.
+// Svi izbori se vraćaju kao polja forme — ništa se ne smije izgubiti (bug 08.10.: priority).
 export function renderAlreadyPublishedPage(opts: {
   youtubeId: string;
   siteBase: string;
   rawUrl: string;
   title: string | null;
+  priority?: number;
+  transcription?: string;
   withMagisterium?: boolean;
   articleModel?: string;
   magisteriumModel?: string;
   source?: 'youtube' | 'x';
+  error?: string;
 }): string {
   const base = opts.siteBase.replace(/\/$/, '');
   const liveUrl = `${base}/v/${opts.youtubeId}`;
@@ -541,11 +560,15 @@ export function renderAlreadyPublishedPage(opts: {
     opts.source === 'x'
       ? ''
       : `<img src="https://i.ytimg.com/vi/${escapeHtml(opts.youtubeId)}/mqdefault.jpg" alt="">`;
+  const tr = opts.transcription || DEFAULT_TRANSCRIPTION;
+  const radio = (name: string, value: string, checked: boolean, label: string, hint = '') =>
+    `<label class="tieropt"><input type="radio" name="${name}" value="${value}"${checked ? ' checked' : ''}> ${label}${hint ? ` <span class="dim">— ${hint}</span>` : ''}</label>`;
+  const trOpt = (o: (typeof TRANSCRIPTION_OPTIONS)[number]) => radio('transcription', o.value, tr === o.value, escapeHtml(o.label));
   const body = `
 <h1>Epizoda je već objavljena na domovina.ai</h1>
 <p>Video <span class="mono">${escapeHtml(opts.youtubeId)}</span> je već prošao pipeline —
-članak i artefakti postoje na CDN-u, pa je epizoda dostupna. Nema je smisla ponovno
-obrađivati (troši resurse i ne mijenja rezultat).</p>
+članak i artefakti postoje na CDN-u. Ponovna obrada ima smisla kad epizodu želiš podići
+na razinu novih (bolji prijepis + titl riječ po riječ, novi članak, novi Magisterium).</p>
 <div class="ytprev" style="margin:1rem 0;">
   ${thumb}
   <div class="ytprev-meta">
@@ -553,20 +576,56 @@ obrađivati (troši resurse i ne mijenja rezultat).</p>
     <a class="ytprev-link" href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener">▶ otvori na domovina.ai</a>
   </div>
 </div>
-<p style="display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
-  <a class="tab" href="/admin">← natrag na queue</a>
-  <form method="POST" action="/admin/jobs" style="margin:0;">
+${opts.error ? `<p class="modelhint warn">⚠ ${escapeHtml(opts.error)}</p>` : ''}
+<div class="addbox">
+  <form method="POST" action="/admin/jobs" id="reprocess">
     <input type="hidden" name="url" value="${escapeHtml(opts.rawUrl)}">
     <input type="hidden" name="title" value="${escapeHtml(opts.title || '')}">
     <input type="hidden" name="force" value="1">
+    <input type="hidden" name="reprocess" value="1">
+    <input type="hidden" name="priority" value="1">
     <input type="hidden" name="mag_present" value="1">
-    ${opts.withMagisterium === false ? '' : '<input type="hidden" name="with_magisterium" value="1">'}
-    <input type="hidden" name="article_model" value="${escapeHtml(opts.articleModel || '')}">
-    <input type="hidden" name="magisterium_model" value="${escapeHtml(opts.magisteriumModel || '')}">
-    <button class="act a-requeue" type="submit">Svejedno dodaj u queue (ponovna obrada)</button>
+    <h2 style="margin-top:0">🔁 Ponovna obrada</h2>
+    <div class="field">
+      <label>Prijepis</label>
+      ${radio('transcription', 'none', tr === 'none', 'Ne diraj postojeći prijepis')}
+      ${TRANSCRIPTION_OPTIONS.slice().reverse().map(trOpt).join('\n      ')}
+    </div>
+    <div class="field">
+      <label>Članak (koraci 7+8)</label>
+      ${radio('article_mode', 'keep', false, 'Ne diraj postojeći članak', 'samo bez novog prijepisa')}
+      ${radio('article_mode', 'new', true, 'Novi članak')}
+      <select id="article_model" name="article_model">${articleModelOptions(opts.articleModel || DEFAULT_ARTICLE_MODEL)}</select>
+    </div>
+    <div class="field">
+      <label class="tieropt"><input type="checkbox" name="with_magisterium" value="1"${opts.withMagisterium === false ? '' : ' checked'}> 🕊 Magisterium iznova (za novi članak)</label>
+      <select id="magisterium_model" name="magisterium_model">${magisteriumModelOptions(opts.magisteriumModel || DEFAULT_MAGISTERIUM_MODEL)}</select>
+    </div>
+    <div class="modelhint">⚡ Ponovna obrada uvijek ide prioritetnim putem (zaseban single-video run) — samo on poštuje izbore iznad. Nakon runa bridge prepiše channel dir (stare datoteke → <span class="mono">.bak</span>) i CDN, tako da prijepis i words.json na CDN-u dolaze iz istog prolaza.</div>
+    <p style="display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; margin-top:1rem;">
+      <a class="tab" href="/admin">← natrag na queue</a>
+      <button class="act a-requeue" type="submit">🔁 Pokreni ponovnu obradu</button>
+    </p>
   </form>
-</p>`;
-  return layout('DOMOVINA Pipeline — epizoda već postoji', body);
+</div>
+<script>
+// Novi prijepis povlači novi članak (poglavlja/citati starog ne odgovaraju novom tekstu).
+(function(){
+  var f = document.getElementById('reprocess');
+  function upd(){
+    var t = f.querySelector('input[name=transcription]:checked');
+    var keep = f.querySelector('input[name=article_mode][value=keep]');
+    var lock = !t || t.value !== 'none';
+    keep.disabled = lock;
+    if (lock) f.querySelector('input[name=article_mode][value=new]').checked = true;
+    var art = f.querySelector('input[name=article_mode]:checked');
+    document.getElementById('article_model').disabled = !art || art.value !== 'new';
+  }
+  f.addEventListener('change', upd);
+  upd();
+})();
+</script>`;
+  return layout('DOMOVINA Pipeline — ponovna obrada', body);
 }
 
 export function statePill(state: string): string {
@@ -659,10 +718,16 @@ ${navTabs('queue')}
     </div>
     <div class="field">
       <label for="title">Naslov (opcijski)</label>
-      <input id="title" name="title" placeholder="npr. Intervju — gost">
+      <input id="title" name="title" placeholder="npr. Intervju — gost" autocomplete="off">
     </div>
     <div class="field">
       <label class="tieropt"><input type="checkbox" name="priority" value="1"> ⚡ Prioritet (Modal instant fast-path)</label>
+    </div>
+    <div class="field">
+      <label for="transcription">Transkripcija</label>
+      <select id="transcription" name="transcription">${transcriptionOptions(DEFAULT_TRANSCRIPTION)}</select>
+      <div class="modelhint" id="transcription_hint"></div>
+      <div class="modelhint warn">⚠ Vrijedi samo za <strong>⚡ prioritetne</strong> jobove. Standardni idu kroz noćni <em>batch</em>, koji svjež priljev ionako vrti kroz Speechmatics + Gemini sluh.</div>
     </div>
     <div class="field">
       <input type="hidden" name="mag_present" value="1">
@@ -834,6 +899,21 @@ function modelBadge(j){
   }
   return out;
 }
+// Transkripcija: bitna samo za prioritetne jobove (standardne vrti nightly s globalnom
+// konfiguracijom), pa se badge prikazuje samo njima — i to uvijek, jer i 'canary' i
+// 'speechmatics' mijenjaju što će epizoda dobiti (words.json ili ne).
+var TRANSCRIPTION_SHORT = {};
+MODELS.transcription.forEach(function(o){ TRANSCRIPTION_SHORT[o.value] = o.short; });
+function reprocessBadge(j){
+  if (!j.reprocess) return '';
+  var what = [j.transcription!=='none'?'prijepis':'', j.redo_article?'članak':'', j.with_magisterium?'Magisterium':''].filter(Boolean).join(' + ');
+  return ' <span class="pill model" title="Ponovna obrada već objavljene epizode: '+esc(what)+'">🔁 '+esc(what)+'</span>';
+}
+function transcriptionBadge(j){
+  if (!j.priority || !j.transcription || j.transcription==='none') return '';
+  var sm = j.transcription === 'speechmatics';
+  return ' <span class="pill model" title="'+(sm?'Speechmatics + Gemini sluh (kao nightly) → i words.json':'Samo Modal Canary + pyannote (jeftino, bez words.json)')+'">🎙 '+esc(TRANSCRIPTION_SHORT[j.transcription]||j.transcription)+'</span>';
+}
 // Kompaktni select u retku. kind='llm-model' (koraci 7+8) | 'mag-model' (korak 8.5).
 // Koristi KRATKE oznake (o.short) — puni labeli iz forme se u retku samo kropaju.
 function modelSel(j, kind, opts, current, title, cls){
@@ -870,7 +950,8 @@ function actions(j){
     return '<div class="actwrap">'+b.join('')+'</div>';
   }
   if (j.state==='queued') { if (!j.priority) b.push(btn(j.id,'prioritize','⚡ Prioritet','Sponzoriraj instant obradu (Modal) — besplatno, radi i za API jobove')); b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
-  if (j.state==='skipped'||j.state==='postponed'||j.state==='failed') b.push(btn(j.id,'requeue','↻ U queue'));
+  if (j.state==='skipped'||j.state==='postponed'||j.state==='failed'||j.state==='transcribing') b.push(btn(j.id,'requeue','↻ U queue'));
+  if (j.state==='done') b.push('<a class="act a-requeue" href="/admin/reprocess/'+esc(j.id)+'" title="Podigni epizodu na razinu nove: prijepis, članak, Magisterium — po izboru">🔁 Ponovna obrada</a>');
   b = b.concat(magActions(j));
   b.push(btn(j.id,'delete','✕'));
   // Dva reda: gumbi gore, selecti modela ispod — flex-wrap umjesto inline-blockova
@@ -1085,7 +1166,7 @@ async function refresh(){
         : '<span class="mono dim">'+srcLabel+'</span>';
       const vid = '<div class="vidcell">'+thumb(j)+srcAnchor+'</div>';
       const sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
-      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+modelBadge(j)+'</div>';
+      const meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+priorityBadge(j)+reprocessBadge(j)+transcriptionBadge(j)+transcribeBadge(j)+magStateBadge(j)+modelBadge(j)+'</div>';
       const res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
                 : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       // data-l = labela kolone za mobile karticu (CSS ::before)
@@ -1128,6 +1209,16 @@ document.getElementById('rows').addEventListener('change', function(e){
   if (!sel || !hint) return;
   function upd(){
     var o = MODELS.article.filter(function(x){ return x.value===sel.value; })[0];
+    hint.textContent = o ? o.hint : '';
+  }
+  sel.addEventListener('change', upd);
+  upd();
+})();
+(function(){
+  var sel = document.getElementById('transcription'), hint = document.getElementById('transcription_hint');
+  if (!sel || !hint) return;
+  function upd(){
+    var o = MODELS.transcription.filter(function(x){ return x.value===sel.value; })[0];
     hint.textContent = o ? o.hint : '';
   }
   sel.addEventListener('change', upd);

@@ -196,19 +196,35 @@ const IN_PROGRESS_STATES = new Set(['fetching', 'transcribing', 'processing']);
  * cronu Mac Minija. Ograničeno na `cap` jobova po pozivu (bounded subrequesti;
  * 404 probe su edge-cache-ani pa su jeftini). Mutira `jobs` in-place tako da
  * ISTI odgovor odmah odražava stvarno stanje. Vrati broj izliječenih.
+ *
+ * ⚠️ Članak vrijedi kao "gotovo" SAMO ako je NOVIJI od joba (claimed_at, inače
+ * created_at). Ponovna obrada već objavljene epizode ("svejedno dodaj") ima STARI
+ * article.json na CDN-u od prvog dana — bez ove provjere job `34741663…` je 08.10.
+ * prešao u done 17 s nakon claima, dok je pipeline tek krenuo s transkripcijom
+ * (a Magisterium cron je onda enqueueao nad starim člankom). Bez Last-Modified
+ * (ne bi se smjelo dogoditi na R2) ne liječimo — job radije čeka bridge reconcile.
  */
 export async function reconcilePublishedJobs(
   db: D1Database,
   cdnBase: string,
   siteBase: string,
-  jobs: Array<{ id: string; youtube_id: string; state: string; detail_url: string | null; deleted_at: number | null }>,
+  jobs: Array<{
+    id: string;
+    youtube_id: string;
+    state: string;
+    detail_url: string | null;
+    deleted_at: number | null;
+    created_at: number;
+    claimed_at: number | null;
+  }>,
   cap = 25,
 ): Promise<number> {
   const base = (siteBase || 'https://domovina.ai').replace(/\/$/, '');
   const candidates = jobs.filter((j) => !j.deleted_at && IN_PROGRESS_STATES.has(j.state)).slice(0, cap);
   const results = await Promise.all(
     candidates.map(async (j) => {
-      if (!(await isPublishedOnDomovina(cdnBase, j.youtube_id))) return false;
+      const probe = await probeArtifact(cdnBase, j.youtube_id, 'article.json');
+      if (!isFreshFor(probe, j)) return false;
       const detailUrl = j.detail_url || `${base}/v/${j.youtube_id}`;
       await updateJob(db, j.id, { state: 'done', detailUrl });
       j.state = 'done';
@@ -217,6 +233,16 @@ export async function reconcilePublishedJobs(
     }),
   );
   return results.filter(Boolean).length;
+}
+
+// Je li artefakt objavljen NAKON što je job krenuo (claim, inače kreiranje)? Izdvojeno
+// radi testa — granični slučajevi su upravo ono što je puklo 08.10.
+export function isFreshFor(
+  probe: ArtifactProbe,
+  job: { created_at: number; claimed_at: number | null },
+): boolean {
+  if (!probe.present || probe.at === null) return false;
+  return probe.at >= (job.claimed_at ?? job.created_at);
 }
 
 /**

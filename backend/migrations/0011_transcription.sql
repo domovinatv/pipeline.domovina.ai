@@ -1,0 +1,17 @@
+-- Izbor transkripcije po videu za PRIORITETNI fast-path (bridge/priority_poller.js).
+--
+-- Nightly za nove epizode vrti Speechmatics kostur (KORAK 2.7) + Gemini 3.8 Flash „sluh"
+-- (KORAK 2.8, --gemini-refine-promote) → kanonski .wav.canary.diarized.srt + words.json
+-- (titl riječ po riječ). Prioritetni poller je do sada slao samo Modal Canary + pyannote,
+-- pa je ad-hoc epizoda bila lošija od nightly epizode i bez words.json.
+--
+-- transcription: 'speechmatics' (kao nightly; ~$2-2.5/ep) | 'canary' (samo Modal Canary +
+-- pyannote; ~$0.01/ep). Modal Canary ostaje uključen i uz 'speechmatics' (drugi, neovisan
+-- transkript — vidi fetch.domovina.tv nightly_pipeline.sh).
+--
+-- NIJE isto što i `transcribe_backend` — to je LEASE (tko trenutno drži transkripciju,
+-- 'colab'|'modal'), a ovo je NAMJERA (koju kvalitetu transkripcije admin/klijent želi).
+--
+-- DEFAULT 'canary' = što su svi postojeći prioritetni jobovi stvarno dobili. Default za
+-- NOVE jobove postavlja createJob (db.ts), ne ova migracija.
+ALTER TABLE jobs ADD COLUMN transcription TEXT NOT NULL DEFAULT 'canary';

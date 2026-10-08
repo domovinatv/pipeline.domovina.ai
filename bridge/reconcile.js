@@ -4,7 +4,8 @@
  *
  * Za jobove u 'fetching'/'transcribing'/'processing' provjeri je li obrada gotova
  * i javi status natrag pipeline.domovina.ai-u:
- *   • CDN data/{id}/article.json → 200  ⇒  done + detail_url (live na /v/{id})
+ *   • CDN data/{id}/article.json → 200 i NOVIJI od joba  ⇒  done + detail_url (live na /v/{id})
+ *     (stari članak kod ponovne obrade NE zatvara job — vidi articleLive)
  *   • lokalno {id}.canary.diarized.srt postoji, ali članak još ne na CDN-u ⇒ processing
  *   • inače ostaje transcribing (čeka Colab Canary)
  *
@@ -71,10 +72,20 @@ function readMeta(youtubeId) {
   }
 }
 
-async function articleLive(youtubeId) {
+// Je li članak live I objavljen nakon što je job krenuo (claimed_at, inače created_at)?
+// Ponovna obrada već objavljene epizode ima STARI article.json na CDN-u — bez provjere
+// Last-Modified job bi se zatvorio u done odmah po claimu (job 34741663…, 08.10.2026.).
+// Isti kriterij kao Worker `isFreshFor` u backend/src/pipeline.ts.
+async function articleLive(job) {
   // GET (ne HEAD) — Cloudflare cache-ira 404 do 4h po točnom URL-u.
-  const r = await fetch(`${CDN_BASE}/data/${youtubeId}/article.json`, { method: 'GET' });
-  return r.ok;
+  const r = await fetch(`${CDN_BASE}/data/${job.youtube_id}/article.json`, {
+    method: 'GET',
+    headers: { Range: 'bytes=0-0' },
+  });
+  if (!r.ok && r.status !== 206) return false;
+  const lm = Date.parse(r.headers.get('last-modified') || '');
+  if (!Number.isFinite(lm)) return false;
+  return Math.floor(lm / 1000) >= (job.claimed_at || job.created_at || 0);
 }
 
 (async () => {
@@ -87,7 +98,7 @@ async function articleLive(youtubeId) {
   }
   console.log(`🔎 Reconcile ${jobs.length} jobova…`);
   for (const job of jobs) {
-    if (await articleLive(job.youtube_id)) {
+    if (await articleLive(job)) {
       const patch = {
         state: 'done',
         detail_url: `${SITE_BASE}/v/${job.youtube_id}`,

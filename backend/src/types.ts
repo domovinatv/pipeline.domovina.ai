@@ -65,9 +65,9 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     value: 'vertex',
     backend: 'vertex',
     model: null,
-    label: 'Gemini 3.5 Flash (Vertex) — jeftina opcija',
-    short: 'Gemini 3.5 Flash',
-    hint: 'Bivši default (do 2026-07-29). Jeftino, ide na GCP kredite; sklonije halucinaciji imena govornika.',
+    label: 'Gemini 3.8 Flash (Vertex) — jeftina opcija',
+    short: 'Gemini 3.8 Flash',
+    hint: 'Bivši default (do 2026-07-29). Model čita fetch.domovina.tv/gemini.conf (GEMINI_MODEL). Jeftino, ide na GCP kredite; sklonije halucinaciji imena govornika.',
   },
   {
     value: 'claude:opus',
@@ -141,6 +141,52 @@ export function parseMagisteriumModel(value: string | null | undefined): Magiste
     : null;
 }
 
+// ───────────────────────── Izbor transkripcije ─────────────────────────
+// Vrijedi za PRIORITETNI fast-path (priority_poller.js → run_pipeline.sh). Standardni jobovi
+// idu kroz nightly batch, koji ima vlastitu globalnu konfiguraciju (danas Speechmatics + sluh
+// za svjež priljev), pa ovo polje na njih nema utjecaja.
+//   speechmatics — kao nightly: Speechmatics kostur (2.7) + Gemini sluh (2.8, promote) uz
+//                  Modal Canary; rezultat ima i words.json (titl riječ po riječ).
+//   canary       — samo Modal Canary + pyannote. Jeftino, bez words.json.
+export const TRANSCRIPTIONS = ['speechmatics', 'canary'] as const;
+export type Transcription = (typeof TRANSCRIPTIONS)[number];
+export const DEFAULT_TRANSCRIPTION: Transcription = 'speechmatics';
+
+export interface TranscriptionOption {
+  value: Transcription;
+  label: string;
+  short: string;
+  hint: string;
+}
+export const TRANSCRIPTION_OPTIONS: TranscriptionOption[] = [
+  {
+    value: 'speechmatics',
+    label: 'Speechmatics + Gemini sluh (kao nightly) — default',
+    short: 'Speechmatics',
+    hint: 'Speechmatics kostur (tko/kada) + Gemini 3.8 Flash čuje zvuk i piše tekst; uz to i Modal Canary. Daje words.json (titl riječ po riječ). ~$2-2.5 po epizodi.',
+  },
+  {
+    value: 'canary',
+    label: 'Samo Canary + pyannote (jeftino)',
+    short: 'Canary',
+    hint: 'Modal Canary + lokalna pyannote diarizacija. ~$0.01 po epizodi, bez words.json; sklono „mljevenju" iste riječi na teškom zvuku.',
+  },
+];
+
+// Ponovna obrada smije i ne dirati prijepis (npr. samo novi članak ili samo Magisterium).
+export const TRANSCRIPTION_NONE = 'none';
+
+// Validiraj izbor transkripcije; nepoznat/izostavljen → null (pozivatelj padne na default).
+// 'none' prolazi samo uz allowNone (ponovna obrada) — novi video bez prijepisa nema smisla.
+export function parseTranscription(
+  value: string | null | undefined,
+  allowNone = false,
+): Transcription | typeof TRANSCRIPTION_NONE | null {
+  if (!value) return null;
+  if (allowNone && value === TRANSCRIPTION_NONE) return TRANSCRIPTION_NONE;
+  return (TRANSCRIPTIONS as readonly string[]).includes(value) ? (value as Transcription) : null;
+}
+
 // Stanja koja lokalni bridge smije postaviti preko PATCH /api/jobs/:id.
 export const BRIDGE_SETTABLE: JobState[] = [
   'fetching',
@@ -177,6 +223,9 @@ export interface JobRow {
   llm_backend: string; // 'vertex' (default) | 'cli' | 'claude' — backend koraka 7+8
   llm_model: string | null; // NULL = default tog backenda; inače slug ('opus'|'sonnet'|'haiku')
   magisterium_model: string | null; // NULL = 'opus' — model za MCP runbook (korak 8.5)
+  transcription: string; // 'speechmatics' | 'canary' | 'none' (samo reprocess) — NAMJERA za prioritetni fast-path (≠ transcribe_backend)
+  reprocess: number; // 1 = namjerna ponovna obrada već objavljene epizode
+  redo_article: number; // 0 = ne diraj postojeći članak (samo reprocess bez novog prijepisa)
   transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju
   transcribe_claimed_at: number | null; // unix sekunde kad je transcribe lock uzet
   done_at: number | null;
@@ -249,6 +298,7 @@ export interface MagisteriumJobRow {
   state: string; // queued | running | done | failed
   source: string; // 'admin' | 'auto'
   model: string | null; // NULL = 'opus' — model kojim poller pokreće MCP runbook
+  force: number; // 1 = regeneriraj iako artefakt već postoji (ponovna obrada)
   error: string | null;
   created_at: number;
   updated_at: number;

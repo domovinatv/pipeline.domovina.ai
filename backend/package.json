@@ -1,6 +1,6 @@
 {
   "name": "pipeline-domovina-backend",
-  "version": "0.15.0",
+  "version": "0.17.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply pipeline_domovina --local",
     "db:migrate:prod": "wrangler d1 migrations apply pipeline_domovina --remote",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild test/*.test.ts --bundle --platform=node --format=esm --outdir=.test-build --out-extension:.js=.mjs --log-level=warning && node --test '.test-build/*.mjs'"
   },
   "dependencies": {
     "hono": "^4.6.14"

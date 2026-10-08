@@ -61,7 +61,10 @@ flowchart TD
   skripti (`'--replace'`, `"--reprocess-article"`) i bez njih stavlja job u `failed`
   PRIJE runa. Inače bi plaćeni Speechmatics run prošao i tiho ostavio stari CDN.
 
-## Ugovor prema fetch.domovina.tv (još NIJE implementiran tamo)
+## Ugovor prema fetch.domovina.tv
+
+> **Implementirano 09.10.2026.** — fetch `8168977f` + `08b4de5c`, bridge `b71b7d2`. Vidi
+> poglavlje „Dopuna 09.10." dolje. Izvorna specifikacija ostaje radi konteksta.
 
 Specifikacija je u zaglavlju `bridge/plan.js`. Ukratko:
 
@@ -92,7 +95,6 @@ Specifikacija je u zaglavlju `bridge/plan.js`. Ukratko:
 
 ## Otvoreno
 
-- fetch: `--replace`, `--reprocess-article`, `force_upload --targets words`, Magisterium `--force`.
 - E2E na `6e1MW97dv10` po kriterijima iz handoffa `2026-10-08-2345` (Speechmatics + Opus +
   Magisterium + Prioritet → CDN `diarized.srt` sadrži „Magisterium AI", isticanje riječi radi
   na `/v/6e1MW97dv10/t/127`, Magisterium noviji od članka, channel dir s `.bak`).
@@ -101,6 +103,29 @@ Specifikacija je u zaglavlju `bridge/plan.js`. Ukratko:
 - Izvor naslova-URL-a nije nađen.
 - Ako job u modu „samo članak" nikad ne dobije novi `article.json`, ostaje u `processing`
   (nema sweepa).
+
+## Dopuna 09.10.: treća zastavica `--reprocess`
+
+Fetch sesija je ustanovila da `--replace` nije dovoljan, jer je pipeline idempotentan po
+postojanju izvedenih fajlova. Kad se ponovna obrada pokrene nad `_unlisted` koji već ima
+staru obradu, KORAK 2.8 ne promovira novi Speechmatics SRT (stari `.wav.canary.diarized.srt`
+postoji), a koraci 7+8 preskoče postojeći sažetak i članak. Run bi „prošao", a ne bi ništa
+promijenio. Zato:
+
+- `run_pipeline.sh --reprocess` (samo uz `--modal-only`): prije runa
+  `tools/reprocess_episode.js stash` skloni staru izvedenu obradu u `.reprocess_bak/`
+  (rename, nikad delete; od `08b4de5c` i done cacheove koraka 7/8/9). Nakon KORAKA 12 ide
+  KORAK 12.1: prisilni prepis immutable CDN ključeva (diarized + words + članak + epub).
+  `force_upload.js` preskače target bez lokalnog fajla, pa neuspjela transkripcija CDN ostavlja staru.
+- `plan.js` šalje `--reprocess` za reprocess jobove s prijepisom; poller ga traži kao
+  `"--reprocess"` u izvoru.
+- **Zamka s navodnicima:** prva verzija pollera tražila je `'--replace'` (jednostruki
+  navodnici), a `auto_reuse_adhoc.js` koristi dvostruke. Detekcija ne bi nikad prošla,
+  pa bi svaka ponovna obrada išla u `failed`. Tokeni u `priority_poller.js` moraju
+  doslovno odgovarati izvoru.
+- **Magisterium `--force`** ne treba izmjenu runbooka: poller preskače pre-check, a
+  `upload_to_r2.js` prepisuje `article.magisterium.json` kad se veličina promijeni
+  (`REPAIRABLE_BASENAMES`) i radi purge.
 
 ## Testovi
 

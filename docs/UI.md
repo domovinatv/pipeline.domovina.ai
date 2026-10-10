@@ -65,6 +65,14 @@ U media queryju `@media (max-width: 760px)`:
   da `width:100%` ne razvuče checkboxe/radije.
 - Inline `<script>` je u TS template literalu: **bez backslasheva u regexima**
   (koristi `[.]`/`[/]` klase — vidi komentar uz `ytId()`), bez backticka i `${`.
+- **`form.title` nije polje „title"**: `HTMLFormElement.title` je atribut same forme, pa
+  `f.title.value` baci grešku. Polja čitaj s `f.elements.namedItem('title')` (dashboard
+  submit). Isto vrijedi za svako ime polja koje je i svojstvo forme (`action`, `method`, `name`).
+- Admin stranice imaju CSP s nonceom (`admin/auth/mount.ts`): inline `<script>` dobiva nonce
+  automatski, ali **inline handleri (`onclick=`, `onsubmit=`) su blokirani** — koristi
+  `addEventListener`. CSP pušta samo `i.ytimg.com` (img) i `www.youtube.com` (oEmbed) izvana.
+- Test `admin-jobs.test.ts` čita polja potvrdne stranice regexom; selecti u
+  `renderReprocessFields()` nemaju `id` (dijalog dashboarda bi inače imao duple id-jeve).
 - `APP_VERSION` (admin/views.ts) bumpaj prije SVAKOG deploya i podudari s
   `version` u package.json — prikazuje se u footeru za brzu identifikaciju builda.
 

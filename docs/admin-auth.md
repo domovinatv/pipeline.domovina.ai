@@ -87,3 +87,18 @@ npx wrangler dev --local-upstream localhost
 Access lokalno ne radi. Za lokalnu sesiju upiši je ručno u lokalni D1 (`admin_sessions`,
 `token_hash` = sha-256 tokena, `expires_at` u budućnosti) i postavi kolačić
 `__Host-pipeline_admin=<token>`. Passkey radi na `http://localhost`.
+
+## Uvođenje 2026-10-10 — zamke i otvoreno
+
+| Zamka | Što se dogodilo | Pravilo |
+|---|---|---|
+| `wrangler d1 migrations apply --remote` → `7403 account is not valid or not authorized` | prolazna greška; isti endpoint je pola sata ranije radio, drugi pokušaj prošao | ponoviti jednom prije traženja uzroka u tokenu |
+| `npm run db:migrate:prod 2>&1 \| tail -6 && npm run deploy` | `tail` vrati 0 pa je deploy prošao **bez** migracije; admin je ~1 min bio bez `admin_sessions` | migraciju pokrenuti zasebno, provjeriti ✅ u izlazu, tek onda `npm run deploy` |
+| Access prijava iz automatizacije | Brave nije imao Access sesiju za tim (MPT sesija je po aplikaciji), traži kod s e-maila | prvu prijavu radi čovjek; kod se ne upisuje iz agenta |
+| CSP admina | inline `onsubmit=` na brisanju API ključa bi bio tiho blokiran | `data-confirm` + listener (`renderKeysPage`) |
+
+**Otvoreno:** prva prijava na `/admin/sso` i dodavanje passkeya (🔑 Passkeyi). Dok se to
+ne napravi, admin radi samo preko Accessa.
+
+Vezani dokumenti: `docs/UI.md` (zajednički klijent admin + dashboard), README „Korisnički
+dashboard i `/api/v1`".

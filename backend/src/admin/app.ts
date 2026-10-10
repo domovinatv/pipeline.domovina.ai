@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { basicAuth } from 'hono/basic-auth';
 import type { Env } from '../types';
 import {
   addApiKeyCredits,
@@ -45,19 +44,9 @@ import {
 
 export const admin = new Hono<{ Bindings: Env }>();
 
-// Basic Auth gate na cijelo /admin stablo. Bez postavljenih secreta → 503 (safe default).
-admin.use('*', async (c, next) => {
-  if (!c.env.ADMIN_USER || !c.env.ADMIN_PASS) {
-    return c.text('Admin nije konfiguriran (postavi ADMIN_USER + ADMIN_PASS secrete).', 503);
-  }
-  const mw = basicAuth({
-    username: c.env.ADMIN_USER,
-    password: c.env.ADMIN_PASS,
-    realm: 'DOMOVINA Pipeline admin',
-  });
-  return mw(c, next);
-});
-
+// Prijava (Cloudflare Access + passkey) i sigurnosna zaglavlja su middleware na
+// glavnoj aplikaciji (auth/mount.ts, mountAdminAuth u index.ts) — ovdje stižu samo
+// zahtjevi s važećom admin sesijom.
 admin.get('/', (c) => c.html(renderJobsPage()));
 
 // Forma "dodaj u queue".
@@ -169,7 +158,7 @@ admin.get('/reprocess/:id', async (c) => {
   );
 });
 
-// Admin akcije po jobu (poziva ih tablica preko fetch-a; Basic Auth se nasljeđuje).
+// Admin akcije po jobu (poziva ih tablica preko fetch-a; sesijski kolačić se nasljeđuje).
 //   delete   — soft-delete (reverzibilno; redak ostaje strikethrough u listi)
 //   restore  — poništi soft-delete (vrati job u izvorno stanje)
 //   purge    — TRAJNO obriši redak iz baze (nepovratno; iza confirm-a u UI-u)

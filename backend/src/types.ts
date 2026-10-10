@@ -4,14 +4,17 @@ export interface Env {
   // live listing artefakata. Optional: bez bindinga ruta vraća 503, ostalo radi normalno.
   CDN_BUCKET?: R2Bucket;
   // Secrets (wrangler secret put):
-  ADMIN_USER?: string;
-  ADMIN_PASS?: string;
   INGEST_KEY?: string;
   TRANSCRIBE_KEY?: string; // scoped token samo za /api/transcription/* (npr. Colab); INGEST_KEY također prolazi
   // Vars (wrangler.toml [vars]):
   SITE_BASE?: string; // https://domovina.ai
   CDN_BASE?: string; // https://cdn.domovina.ai — izvor istine za per-korak artefakte
   PRICE_CENTS?: string; // default cijena u centima
+  // Admin prijava (Cloudflare Access + passkey, docs/admin-auth.md) — vars, nisu tajne:
+  ADMIN_EMAILS?: string; // CSV e-mailova koji smiju u /admin (provjera pri svakom zahtjevu)
+  ADMIN_HOST?: string; // jedini host admina (passkey rpID = hostname)
+  ACCESS_TEAM_DOMAIN?: string; // Zero Trust tim, npr. domovina.cloudflareaccess.com
+  ACCESS_AUD?: string; // AUD Access aplikacije koja štiti ADMIN_HOST/admin/sso
 }
 
 export const JOB_STATES = [

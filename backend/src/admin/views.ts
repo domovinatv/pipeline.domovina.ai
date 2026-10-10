@@ -27,7 +27,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.18.0';
+export const APP_VERSION = 'v0.19.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -177,6 +177,16 @@ h1 { font-size: 1.4rem; font-weight: 800; letter-spacing: -.01em; color: var(--n
 .addbox select:focus { outline: none; border-color: var(--navy-h); box-shadow: var(--ring); }
 .modelhint { font-size: .76rem; color: var(--muted); line-height: 1.4; min-height: 1.05rem; }
 .modelhint.warn { color: #92400E; }
+/* Tabovi + odjava u istom redu; prijava (auth/mount.ts). */
+.navrow { display: flex; align-items: flex-start; gap: .5rem; flex-wrap: wrap; }
+.navrow .logout { margin: 0; }
+.navrow .logout .tab { cursor: pointer; font: inherit; }
+.login { max-width: 30rem; }
+.login .addbox p { margin: .4rem 0; }
+.login .addbox button, .login .addbox a.btnlink { width: 100%; justify-content: center; }
+a.btnlink { display: inline-flex; align-items: center; padding: .7rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--card); color: var(--navy); font-weight: 700; text-decoration: none; }
+.msg { padding: .65rem .9rem; border-radius: var(--radius-sm); background: #E7F5EC; border: 1px solid #BFE3CC; margin-bottom: .8rem; }
+.msg.bad { background: #F8E2E0; border-color: #F3C9C5; color: #7F1D1D; }
 /* Dijalog ponovne obrade u dashboardu (<dialog>, showModal — bez JS alerta). */
 dialog.rpdlg { border: none; border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 0;
   width: min(40rem, calc(100% - 2rem)); max-height: calc(100% - 2rem); }
@@ -628,10 +638,12 @@ ${groupsHtml}
 }
 
 // Navigacijski tabovi između queue, otkrivenih videa i API-ključeva.
-function navTabs(active: 'queue' | 'discovered' | 'keys'): string {
+function navTabs(active: 'queue' | 'discovered' | 'keys' | 'passkeys'): string {
   const tab = (href: string, id: string, label: string) =>
     `<a class="tab${active === id ? ' active' : ''}" href="${href}">${label}</a>`;
-  return `<nav class="tabs">${tab('/admin', 'queue', 'Queue')}${tab('/admin/discovered', 'discovered', '🌙 Otkriveni')}${tab('/admin/keys', 'keys', 'API ključevi')}</nav>`;
+  // Odjava je POST (CSRF provjera Origin-a u auth/mount.ts), pa forma, ne link.
+  return `<div class="navrow"><nav class="tabs">${tab('/admin', 'queue', 'Queue')}${tab('/admin/discovered', 'discovered', '🌙 Otkriveni')}${tab('/admin/keys', 'keys', 'API ključevi')}${tab('/admin/passkeys', 'passkeys', '🔑 Passkeyi')}</nav>` +
+    `<form method="POST" action="/admin/logout" class="logout"><button class="tab" type="submit" title="Odjava iz admina">Odjava</button></form></div>`;
 }
 
 // Glavna stranica: stats + forma za dodavanje + tablica (puni se JSON-om na klijentu).
@@ -1058,7 +1070,8 @@ export function renderKeysPage(keys: ApiKeyRow[], flash?: { rawKey: string; name
     ? `<div class="flash">
     <strong>Ključ „${escapeHtml(flash.name)}" kreiran.</strong> Spremi ga sad — neće biti ponovno prikazan.
     <code class="key">${escapeHtml(flash.rawKey)}</code>
-    <div class="dim">Pohranjuje se samo SHA-256 hash; sirovi ključ se kasnije ne može dohvatiti.</div>
+    <div class="dim">Pohranjuje se samo SHA-256 hash; sirovi ključ se kasnije ne može dohvatiti.
+    Link za korisnika: <span class="mono">/dashboard?auth=${escapeHtml(flash.rawKey)}</span> (jednom otvoren, preglednik ga zapamti 90 dana).</div>
   </div>`
     : '';
 
@@ -1082,7 +1095,7 @@ export function renderKeysPage(keys: ApiKeyRow[], flash?: { rawKey: string; name
           <button class="act a-requeue">Primijeni</button>
         </form>
         ${toggle}
-        <form method="POST" action="/admin/keys/${k.id}/delete" class="keyact" onsubmit="return confirm('Trajno obrisati API ključ „${escapeHtml(k.name)}\\"? Nepovratno.')"><button class="act a-delete">Obriši</button></form>
+        <form method="POST" action="/admin/keys/${k.id}/delete" class="keyact" data-confirm="Trajno obrisati API ključ „${escapeHtml(k.name)}\"? Nepovratno."><button class="act a-delete">Obriši</button></form>
       </td>
     </tr>`;
     })
@@ -1115,6 +1128,73 @@ ${flashHtml}
     </tr></thead>
     <tbody>${rows || '<tr><td colspan="6" class="empty">Još nema ključeva. Kreiraj prvi gore.</td></tr>'}</tbody>
   </table>
-</div>`;
+</div>
+<script>
+// Potvrda brisanja. Ne inline onsubmit= — CSP admina (auth/mount.ts) blokira inline handlere.
+document.querySelectorAll('form[data-confirm]').forEach(function(f){
+  f.addEventListener('submit', function(e){ if (!confirm(f.dataset.confirm)) e.preventDefault(); });
+});
+</script>`;
   return layout('DOMOVINA Pipeline — API ključevi', body);
+}
+
+// ───────────────────────── Prijava i passkeyi (auth/mount.ts) ─────────────────────────
+// Preneseno iz pay.domovina.ai (renderLoginPage/renderPasskeysPage), u ovom layoutu.
+
+export function renderLoginPage(opts: { next: string; error?: string; accessConfigured: boolean }): string {
+  const next = escapeHtml(opts.next);
+  const body = `
+<div class="login">
+<h1>Prijava u admin</h1>
+${opts.error ? `<div class="msg bad">${escapeHtml(opts.error)}</div>` : ''}
+<div id="msg" class="msg" hidden></div>
+<div class="addbox">
+  <p><button id="passkey-login" type="button" data-next="${next}">🔑 Prijava passkeyem</button></p>
+  ${opts.accessConfigured
+    ? `<p><a class="btnlink" href="/admin/sso?next=${encodeURIComponent(opts.next)}">Prijava preko Cloudflare Accessa (kod na e-mail)</a></p>`
+    : '<p class="dim">Cloudflare Access nije konfiguriran.</p>'}
+  <div class="hint">Prvi passkey se upisuje nakon prijave preko Accessa (🔑 Passkeyi → Dodaj passkey). Access je ujedno oporavak ako izgubiš sve passkeye.</div>
+</div>
+<p class="dim">Korisnik s API ključem? Tvoj dashboard je na <a href="/dashboard">/dashboard</a>.</p>
+</div>
+<script src="/admin/static/passkey.js"></script>`;
+  return layout('DOMOVINA Pipeline — prijava', body);
+}
+
+export function renderPasskeysPage(opts: {
+  email: string;
+  passkeys: Array<{ id: string; label: string; created_at: string; last_used_at: string | null }>;
+}): string {
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('hr-HR', { timeZone: 'Europe/Zagreb' }) : '—');
+  const rows = opts.passkeys.length === 0
+    ? '<tr><td colspan="4" class="empty">Još nema passkeya. Dodaj prvi ispod.</td></tr>'
+    : opts.passkeys.map((p) => `<tr>
+        <td data-l="Oznaka">${escapeHtml(p.label)}</td>
+        <td class="dim" data-l="Upisan">${escapeHtml(when(p.created_at))}</td>
+        <td class="dim" data-l="Zadnja uporaba">${escapeHtml(when(p.last_used_at))}</td>
+        <td data-l="Akcije"><form method="POST" action="/admin/passkeys/${encodeURIComponent(p.id)}/delete" class="keyact">
+          <button class="act a-delete" type="submit">Ukloni</button></form></td>
+      </tr>`).join('');
+  const body = `
+${navTabs('passkeys')}
+<h1>Passkeyi <span class="dim" style="font-size:.9rem;font-weight:600;">— ${escapeHtml(opts.email)}</span></h1>
+<div id="msg" class="msg" hidden></div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Oznaka</th><th>Upisan</th><th>Zadnja uporaba</th><th>Akcije</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>
+<div class="addbox" style="margin-top:1.2rem;">
+  <form id="passkey-register">
+    <div class="field">
+      <label for="pklabel">Oznaka uređaja</label>
+      <input id="pklabel" type="text" name="label" placeholder="npr. MacBook / Apple Passwords" maxlength="80" required>
+    </div>
+    <button type="submit"><span class="plus">+</span> Dodaj passkey</button>
+  </form>
+  <div class="hint">Passkey vrijedi samo za ovu domenu (pipeline.domovina.ai) — oni s mpt.domovina.ai ovdje ne rade. Dodavanje traži prijavu mlađu od 10 min; najviše 5 po e-mailu.</div>
+</div>
+<script src="/admin/static/passkey.js"></script>`;
+  return layout('DOMOVINA Pipeline — passkeyi', body);
 }

@@ -9,7 +9,8 @@ Vidi `README.md` za arhitekturu. Ovdje samo konvencije za rad u kodu.
   Modeliran po `../pay.domovina.ai/backend` (isti stack, branding, gitignore).
 - **Bridge**: plain Node skripte (`bridge/`) koje trče lokalno na Mac Miniju i
   spajaju cloud queue s pipelineom u `../fetch.domovina.tv`.
-- **Admin**: server-rendered HTML u Workeru (`src/admin/views.ts`), Basic Auth.
+- **Admin**: server-rendered HTML u Workeru (`src/admin/views.ts`), prijava Cloudflare
+  Access + passkey (`src/admin/auth/`, `docs/admin-auth.md`).
   NEMA zasebnog frontend builda. UI konvencije (dizajn sustav, mobile kartice,
   `data-l` pravilo za nove stupce, vizualna verifikacija) → `docs/UI.md`.
 
@@ -27,9 +28,13 @@ npm run deploy              # wrangler deploy
 ## Konvencije
 
 - **Jezik**: svi komentari, log poruke, admin UI tekst — hrvatski (kao cijeli ekosustav).
-- **Secrets**: NIKAD u repo (public!). `ADMIN_USER`/`ADMIN_PASS`/`INGEST_KEY` kroz
+- **Secrets**: NIKAD u repo (public!). `INGEST_KEY`/`TRANSCRIBE_KEY` kroz
   `wrangler secret put`. Lokalno `.dev.vars` (gitignored, vidi `.dev.vars.example`).
-- **Auth**: `/admin/*` Basic Auth; `/api/jobs/*` Bearer `INGEST_KEY`.
+- **Auth**: `/admin/*` sesija (Access ili passkey; CSP s nonceom — bez inline `onclick=`/
+  `onsubmit=`, POST mora imati isti `Origin`); `/api/jobs/*` Bearer `INGEST_KEY`;
+  `/dashboard` + `/api/v1/*` korisnikov API ključ.
+- **Dijeljeni UI**: retke/korake/forme za admin i dashboard gradi `src/ui/client.ts`
+  (nova značajka ide tamo, ne u jednu stranicu — `docs/UI.md`).
 - **Job stanja**: `queued→fetching→transcribing→processing→done|failed`. Bridge smije
   postaviti samo `BRIDGE_SETTABLE` stanja preko PATCH-a.
 - **Claim**: atomski conditional UPDATE (`state='queued'` guard), bez D1 transakcija.

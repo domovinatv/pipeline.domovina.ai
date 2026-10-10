@@ -17,7 +17,7 @@ red, lokalni bridge ga povlači.
 ```
 ┌─────────────────────── CLOUD (Cloudflare) ───────────────────────┐
 │  pipeline.domovina.ai  (Worker, Hono)                               │
-│   • /admin           Basic Auth dashboard — dodaj URL, kronološki  │
+│   • /admin           Access + passkey admin — dodaj URL, kronološki │
 │                      ispis jobova + status (auto-refresh)          │
 │   • /api/jobs/*      Bearer INGEST_KEY — enqueue/claim/patch/list   │
 │   • D1 `jobs`        queued→fetching→transcribing→processing→done   │
@@ -87,8 +87,6 @@ wrangler d1 create pipeline_domovina
 wrangler d1 migrations apply pipeline_domovina --remote
 
 # 2. Secrets
-wrangler secret put ADMIN_USER     # npr. ms
-wrangler secret put ADMIN_PASS
 wrangler secret put INGEST_KEY     # dugački random token (dijeli ga bridge)
 
 # 3. Deploy — wrangler.toml ima [[routes]] custom_domain=true, pa deploy SAM
@@ -96,7 +94,8 @@ wrangler secret put INGEST_KEY     # dugački random token (dijeli ga bridge)
 npm run deploy
 ```
 
-Otvori `https://pipeline.domovina.ai/admin` (Basic Auth) i dodaj prvi video.
+Otvori `https://pipeline.domovina.ai/admin`, prijavi se preko Cloudflare Accessa (kod na
+e-mail), dodaj passkey i dodaj prvi video. Prijava je opisana u `docs/admin-auth.md`.
 Novi subdomain nije pod Cloudflare Access app-om → javno dostupan odmah (auth radi Worker).
 
 ## Setup (lokalni bridge na Mac Miniju)

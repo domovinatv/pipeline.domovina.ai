@@ -1,7 +1,7 @@
 # Kopiraj u .dev.vars (gitignored) za lokalni `wrangler dev`.
 # U produkciji se postavljaju kroz `wrangler secret put <NAME>`.
-ADMIN_USER="admin"
-ADMIN_PASS="promijeni-me"
+# Admin (/admin) više nema lozinku: Access + passkey (docs/admin-auth.md). Lokalno vidi
+# „Lokalno" tamo — sesija se upiše ručno u lokalni D1.
 INGEST_KEY="dugacki-random-token-za-bridge"
 # Scoped token za /api/transcription/* (Colab claim/skip). INGEST_KEY također prolazi tamo.
 TRANSCRIBE_KEY="dugacki-random-token-za-colab"

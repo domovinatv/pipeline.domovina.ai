@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './types';
 import { admin } from './admin/app';
+import { mountAdminAuth } from './admin/auth/mount';
 import { dashboard } from './dashboard/app';
 import { jobsApi } from './jobs/api';
 import { publicApi } from './jobs/v1';
@@ -11,6 +12,9 @@ import { usageApi } from './usage/api';
 import { autoEnqueueMagisterium, countByState, sweepStuckFetching, sweepStuckTranscribing } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Admin prijava + CSP/CSRF zaglavlja — MORA prije ijedne /admin rute (auth/mount.ts).
+mountAdminAuth(app);
 
 // Health / info.
 app.get('/', async (c) => {
@@ -59,6 +63,13 @@ export default {
       sweepStuckTranscribing(env.DB, 'colab', 48 * 60 * 60).then((n) => {
         if (n) console.log(`sweep: oslobođeno ${n} stale colab transcribe lockova`);
       }),
+    );
+    // Istekle admin sesije i WebAuthn izazovi (inače se brišu tek pri sljedećoj prijavi).
+    ctx.waitUntil(
+      env.DB.batch([
+        env.DB.prepare('DELETE FROM admin_sessions WHERE expires_at < ?').bind(new Date().toISOString()),
+        env.DB.prepare('DELETE FROM admin_challenges WHERE expires_at < ?').bind(new Date().toISOString()),
+      ]).catch((e) => console.warn('admin auth cleanup:', e)),
     );
     // (3) Auto-enqueue Magisterium: done jobovi s with_magisterium=1 bez ijednog HR zahtjeva
     // dobiju queued zahtjev (poller ih pokupi; idempotentno preskoči ako artefakt već postoji).

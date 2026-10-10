@@ -8,7 +8,8 @@ account_id = "7dc7167b7e2e00923bfa7cd697df14e4"
 # zapis + edge certifikat za pipeline.domovina.ai. Nužno jer je subdomain nov
 # (nema postojećeg DNS zapisa). Bonus: novi subdomain nije pod ničijim Cloudflare
 # Access app-om (za razliku od studio.domovina.ai = Supabase Studio), pa je javno
-# dostupan odmah; auth radi Worker (Basic Auth /admin + Bearer /api).
+# dostupan odmah; auth radi Worker (admin sesija za /admin, Bearer /api). Access štiti
+# SAMO /admin/sso (vidi [vars] ADMIN_* niže i docs/admin-auth.md).
 [[routes]]
 pattern = "pipeline.domovina.ai"
 custom_domain = true
@@ -45,9 +46,19 @@ CDN_BASE = "https://cdn.domovina.ai"
 # Default cijena obrade u centima (billing skela; "0" = besplatno / admin put).
 PRICE_CENTS = "100"
 
+# Admin prijava (v0.19.0, docs/admin-auth.md) — isti model kao pay.domovina.ai /
+# bank-push-gateway: Cloudflare Access (kod na e-mail) na /admin/sso ili passkey.
+# Oduzimanje pristupa: makni e-mail iz ADMIN_EMAILS (djeluje odmah, i na postojeće
+# sesije) i iz Access politike „Pipeline admini".
+#   ADMIN_HOST         — jedini host admina; drugi host preusmjerava (passkey rpID = hostname)
+#   ACCESS_TEAM_DOMAIN — Zero Trust tim
+#   ACCESS_AUD         — AUD Access aplikacije „Pipeline admin (sso)" (ADMIN_HOST/admin/sso)
+ADMIN_EMAILS = "stepanic.matija@gmail.com,ms@ff.hr"
+ADMIN_HOST = "pipeline.domovina.ai"
+ACCESS_TEAM_DOMAIN = "domovina.cloudflareaccess.com"
+ACCESS_AUD = "4b0bd9c14bdc6505decc3bbaba477f824513cdc0a99fcd21c78341828922daa9"
+
 # Secrets — postavi s `wrangler secret put`:
-#   ADMIN_USER     # Basic Auth user za /admin dashboard
-#   ADMIN_PASS     # Basic Auth pass za /admin dashboard
 #   INGEST_KEY     # Bearer token za /api/jobs/* (lokalni bridge na Mac Miniju + budući API)
 #   TRANSCRIBE_KEY # Scoped Bearer token SAMO za /api/transcription/* (npr. Colab userdata).
 #                  # INGEST_KEY također prolazi na tim rutama; ovaj token NE otključava /api/jobs/*.

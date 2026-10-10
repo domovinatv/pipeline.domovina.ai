@@ -228,8 +228,12 @@ export async function countJobs(db: D1Database, opts: ListOpts = {}): Promise<nu
   return r?.n ?? 0;
 }
 
-export async function countByState(db: D1Database): Promise<Record<string, number>> {
-  const res = await db.prepare(`SELECT state, COUNT(*) AS n FROM jobs GROUP BY state`).all<{
+// apiKeyId (opcijski) ograniči brojanje na jobove jednog ključa (korisnički dashboard).
+export async function countByState(db: D1Database, apiKeyId?: string): Promise<Record<string, number>> {
+  const stmt = apiKeyId
+    ? db.prepare(`SELECT state, COUNT(*) AS n FROM jobs WHERE api_key_id = ? GROUP BY state`).bind(apiKeyId)
+    : db.prepare(`SELECT state, COUNT(*) AS n FROM jobs GROUP BY state`);
+  const res = await stmt.all<{
     state: string;
     n: number;
   }>();

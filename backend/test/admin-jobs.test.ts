@@ -53,7 +53,7 @@ function hiddenFields(html: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) out[m[1]] = m[2];
   for (const m of html.matchAll(/<input type="(?:radio|checkbox)" name="([^"]+)" value="([^"]*)" checked>/g)) out[m[1]] = m[2];
-  for (const m of html.matchAll(/<select id="[^"]+" name="([^"]+)">(.*?)<\/select>/gs)) {
+  for (const m of html.matchAll(/<select (?:id="[^"]+" )?name="([^"]+)">(.*?)<\/select>/gs)) {
     const sel = m[2].match(/<option value="([^"]*)" selected>/);
     if (sel) out[m[1]] = sel[1];
   }

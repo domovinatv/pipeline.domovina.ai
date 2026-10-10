@@ -50,6 +50,31 @@ pa se job NE dovrši u jednom runu (`transcribing` → čeka Colab → idući ru
 | `done` | `data/{id}/article.json` živ na CDN-u, `detail_url` spreman |
 | `failed` | trajna greška (private/unavailable/anti-bot) |
 
+## Korisnički dashboard i `/api/v1` (API ključevi)
+
+API ključ (`pdk_…`, izdaje se u `/admin/keys`) otvara `https://pipeline.domovina.ai/dashboard`.
+Link `/dashboard?auth=pdk_…` se jednom provjeri, ključ se spremi u HttpOnly kolačić
+(90 dana) i preusmjeri na čisti `/dashboard`, da ključ ne ostane u URL-u.
+
+Dashboard ima **sve izbore kao admin** (odluka 2026-10-10: ključeve dobivaju samo poznati
+ljudi; kontrola je revoke ključa i badge 🔑 u adminu koji pokazuje tko je što predao).
+Default je maksimalna kvaliteta: Speechmatics + Gemini sluh, Claude Opus članak,
+Magisterium s Opusom. Retke, korake, tokene i datoteke gradi isti klijentski kod kao
+admin (`backend/src/ui/client.ts`).
+
+| Endpoint (Bearer ključ) | Što radi | Krediti |
+|---|---|---|
+| `POST /api/v1/jobs` | `url`, `title?`, `tier` (`standard`/`priority`), `transcription?`, `article_model?`, `with_magisterium?`, `magisterium_model?` | 1 standard · prioritet 5 (Speechmatics) / 3 (Canary) · već objavljeno = uvoz, 0 |
+| `GET /api/v1/jobs` | `limit`, `offset`, `state`, `q` → `jobs`, `counts`, `total`, `credits_remaining` | — |
+| `POST /api/v1/jobs/:id/prioritize` | queued standard → prioritet | razlika |
+| `POST /api/v1/jobs/:id/reprocess` | ponovna obrada vlastitog `done` videa: `transcription` (`none`/`speechmatics`/`canary`), `article_mode` (`new`/`keep`), modeli, Magisterium | kao prioritet; `none` = 3 |
+| `POST /api/v1/jobs/:id/llm-model` · `/mag-model` | `{ value }` — promjena modela (članak samo prije `done`) | — |
+| `POST /api/v1/jobs/:id/magisterium` | `{ lang: 'hr'\|'en' }` za `done` video | — |
+| `GET /api/v1/jobs/:id/pipeline` · `/files` | koraci + tokeni · live CDN listing | — |
+
+Uvezene epizode (`source='import'`, objavljene izvan ključa) ponovno obrađuje samo admin,
+jer bridge pri ponovnoj obradi prepiše CDN te epizode za sve posjetitelje.
+
 ## Setup (cloud)
 
 ```bash

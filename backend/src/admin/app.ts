@@ -31,7 +31,7 @@ import {
   updateJob,
 } from '../db';
 import type { DiscoveredRow } from '../types';
-import { DEFAULT_TRANSCRIPTION, articleModelValue, parseArticleModel, parseMagisteriumModel, parseTranscription } from '../types';
+import { DEFAULT_TRANSCRIPTION, articleModelValue, parseArticleModel, parseMagisteriumModel, parseTranscription, reprocessRedoArticle } from '../types';
 import { cleanTitle, extractSourceRef, fetchOEmbed } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, listCdnFiles, reconcilePublishedJobs } from '../pipeline';
 import {
@@ -76,7 +76,7 @@ admin.post('/jobs', async (c) => {
   // 'none' (ne diraj prijepis) smije samo ponovna obrada.
   const transcription = parseTranscription(String(form.transcription ?? ''), reprocess) ?? DEFAULT_TRANSCRIPTION;
   // Novi prijepis UVIJEK povlači novi članak; „ne diraj članak" vrijedi samo uz 'none'.
-  const redoArticle = !reprocess || transcription !== 'none' || String(form.article_mode ?? '') !== 'keep';
+  const redoArticle = !reprocess || reprocessRedoArticle(transcription, String(form.article_mode ?? ''));
   // Magisterium checkbox: `mag_present` hidden polje označava da forma nosi checkbox (unchecked
   // checkbox ne šalje ništa). Bez tog polja (stari/programatski POST) → default UKLJUČENO.
   const withMagisterium = String(form.mag_present ?? '') === '1' ? String(form.with_magisterium ?? '') === '1' : true;
@@ -438,6 +438,16 @@ admin.get('/api/jobs', async (c) => {
     countJobs(c.env.DB, { state, q }), // total za trenutni filter → pager
   ]);
   return c.json({ counts, jobs, total, limit, offset });
+});
+
+// Isti live listing kao /admin/jobs/:id/files, ali JSON — za „📁 datoteke" panel u retku
+// (dijeljeni klijent iz ui/client.ts, isti oblik kao /api/v1/jobs/:id/files).
+admin.get('/api/jobs/:id/files', async (c) => {
+  if (!c.env.CDN_BUCKET) return c.json({ error: 'CDN_BUCKET R2 binding nije konfiguriran' }, 503);
+  const job = await getJob(c.env.DB, c.req.param('id'));
+  if (!job) return c.json({ error: 'not found' }, 404);
+  const cdnBase = (c.env.CDN_BASE || 'https://cdn.domovina.ai').replace(/\/$/, '');
+  return c.json({ cdn_base: cdnBase, groups: await listCdnFiles(c.env.CDN_BUCKET, job.youtube_id) });
 });
 
 // Granularni pipeline status za jedan job: probe CDN artefakte i vrati po-korak

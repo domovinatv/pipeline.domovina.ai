@@ -6,6 +6,24 @@ Dashboard ima samo mali lokalni `<style>` dodatak (`.imp`, `.vlinks`) u
 `backend/src/dashboard/views.ts`. NEMA frontend builda — sve je server-rendered
 HTML + inline JS.
 
+## Jedan klijentski kod za admin i dashboard (v0.18.0+)
+
+Do v0.17.0 dashboard je imao vlastitu kopiju klijentskog JS-a, pa je sve dodano u admin
+nakon ~v0.14 (tokeni, bedževi modela i ponovne obrade, paginacija, pretraga) dashboardu
+nedostajalo. Sad oba ekrana grade retke iz `backend/src/ui/client.ts`:
+
+- `SHARED_CLIENT_JS` — formatiranje, bedževi (`jobBadges`), selecti modela, koraci +
+  tokeni + 📁 datoteke u detail retku, stat pločice, filter/pretraga/pager, oEmbed preview.
+  Stranica prije njega zada `READ` (`/admin/api` | `/api/v1`), `ACT` (`/admin/jobs` |
+  `/api/v1/jobs`), `H` (zaglavlja; dashboard = Bearer ključ) i `COLS`.
+- `renderJobChoiceFields()` — izbori obrade u formi za dodavanje (isti u obje forme).
+- `renderReprocessFields()` + `REPROCESS_WIRE_JS` — ponovna obrada (admin stranica i
+  dashboard `<dialog>`); serversko pravilo je `reprocessRedoArticle()` u `types.ts`.
+
+⚠️ **PRAVILO: nova značajka u retku, koracima ili formi ide u `ui/client.ts`**, ne u jednu
+od stranica. Na stranici ostaje samo ono što je stvarno njezino: admin akcije (skip,
+odgodi, soft-delete, 🔑 izvor), dashboard krediti, ⚡ forsiranje i dijalog ponovne obrade.
+
 ## Dizajn sustav (premium SaaS, v0.7.0)
 
 - Svijetla pozadina `--page` + bijele kartice (`--card`) sa sjenama
@@ -31,6 +49,7 @@ U media queryju `@media (max-width: 760px)`:
   se redovi generiraju:
   - admin queue: `refresh()` u `renderJobsPage()` (admin/views.ts)
   - korisnički dashboard: `refresh()` u `renderDashboardPage()` (dashboard/views.ts)
+  - (oba koriste `detailRow()`/`emptyRow()` iz ui/client.ts s `COLS` za colspan)
   - API ključevi: server-rendered redovi u `renderKeysPage()` (admin/views.ts)
 - Detail redak s pipeline koracima (`tr.detail-row`) se negativnim marginom
   vizualno "lijepi" na karticu retka iznad.
@@ -63,5 +82,7 @@ View funkcije su čisti string-rendereri pa se daju bundlati i izvršiti u Nodeu
    await refresh();
    ```
 4. Screenshot na 1440px (desktop) i 390px (mobile).
+5. Provjeri da nema horizontalnog scrolla: `document.documentElement.scrollWidth` mora biti
+   jednak širini viewporta (na 390px ga je ranije gurao Fluid/Omeđeno toggle → skriven ≤760px).
 
 Time se cijeli UI (uključivo klijentski row-rendering) provjeri bez D1/.dev.vars.

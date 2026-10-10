@@ -8,11 +8,18 @@
  * Server-side rendera se samo ljuska + ugrađeni ključ; tablica/koraci se pune na
  * klijentu preko postojećih `/api/v1/*` endpointa (Bearer = isti ključ). Time se
  * ne duplicira logika: enqueue je isti kreditno-gejtani put kao programatski API.
+ *
+ * Od v0.18.0 retke, korake, tokene, datoteke, filter i paginaciju gradi isti klijentski
+ * kod kao /admin (ui/client.ts), a korisnik ima SVE izbore obrade kao admin (odluka
+ * 2026-10-10: ključeve dobivaju samo poznati ljudi; kontrola je revoke + praćenje po ključu).
+ * Ovdje ostaje samo ono što je specifično za ključ: krediti, ⚡ forsiranje, ponovna obrada
+ * vlastitog videa u dijalogu, oznaka uvezenih epizoda.
  */
 
 import type { ApiKeyRow } from '../types';
 import { escapeHtml } from '../util';
 import { layout } from '../admin/views';
+import { SHARED_CLIENT_JS, renderJobChoiceFields, renderReprocessFields } from '../ui/client';
 
 // Ulazna stranica kad ključ nije zadan ili je neispravan: jednostavna forma koja
 // preusmjeri na /dashboard?auth=<ključ>. `error` se postavi na neispravan ključ.
@@ -31,14 +38,14 @@ ${err}
     </div>
     <button type="submit">Otvori dashboard</button>
   </form>
-  <div class="hint">Zalijepi svoj <span class="mono">pdk_…</span> ključ. Otvorit će se dashboard u scopeu tog ključa — vidiš samo svoje obrade i troškove kredita. Link <span class="mono">/dashboard?auth=…</span> možeš spremiti kao bookmark.</div>
+  <div class="hint">Zalijepi svoj <span class="mono">pdk_…</span> ključ. Otvorit će se dashboard u scopeu tog ključa — vidiš samo svoje obrade i troškove kredita. Ovaj preglednik zapamti ključ 90 dana; link <span class="mono">/dashboard?auth=…</span> i dalje radi.</div>
 </div>`;
   return layout('DOMOVINA Pipeline — moj dashboard', body);
 }
 
 // Glavni scope-ani dashboard. `rawKey` se ugrađuje u klijentski JS (nužno za Bearer
-// pozive na /api/v1/*). Tablica + koraci pune se identično kao u adminu, ali čitaju
-// samo jobove ovog ključa i enqueue troši njegove kredite.
+// pozive na /api/v1/*). Stranica se servira s `no-store`, a ključ ne stoji u URL-u
+// (dashboard/app.ts ga iz ?auth= premjesti u kolačić).
 export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
   const body = `
 <style>
@@ -46,19 +53,14 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
          font-size:.68rem; font-weight:700; letter-spacing:.02em; text-transform:uppercase;
          background:#F3E8FF; color:#7C3AED; vertical-align:middle; }
   .vlinks { display:flex; flex-direction:column; gap:.15rem; min-width:0; }
-  .vlink { font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40ch; }
+  .vlink { font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:26ch; }
   .vlink.dim { color:var(--muted); }
   /* Mobile: linkovi smiju zauzeti punu širinu kartice */
   @media (max-width: 760px) { .vlinks { flex: 1; } .vlink { max-width: 100%; } }
 </style>
-<h1>Moj pipeline <span class="dim" style="font-size:.9rem;font-weight:600;">— ${escapeHtml(key.name)}</span></h1>
+<h1>Moj pipeline <span class="dim" style="font-size:.9rem;font-weight:600;">— ${escapeHtml(key.name)}</span> <a class="tab" style="font-size:.8rem;vertical-align:middle;" href="/dashboard/logout" title="Zaboravi ključ u ovom pregledniku">odjava</a></h1>
 
-<div class="stats" id="stats">
-  <div class="stat ${key.credits > 0 ? 's-done' : 's-failed'}">
-    <div class="label">Preostali krediti</div>
-    <div class="value" id="credits">${key.credits}</div>
-  </div>
-</div>
+<div class="stats" id="stats"></div>
 
 <div class="addbox">
   <form id="addform">
@@ -68,15 +70,16 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
     </div>
     <div class="field">
       <label for="title">Naslov (opcijski)</label>
-      <input id="title" name="title" placeholder="npr. Intervju — gost">
+      <input id="title" name="title" placeholder="npr. Intervju — gost" autocomplete="off">
     </div>
     <div class="field">
       <label>Način obrade</label>
       <div class="tierpick">
-        <label class="tieropt"><input type="radio" name="tier" value="standard" checked> <b>Standardno</b> <span class="dim">— 1 kredit, noćni batch (do ~1–2 dana)</span></label>
-        <label class="tieropt"><input type="radio" name="tier" value="priority"> <b>⚡ Prioritet</b> <span class="dim">— 3 kredita, obrada odmah (~15 min)</span></label>
+        <label class="tieropt"><input type="radio" name="tier" value="standard" checked> <b>Standardno</b> <span class="dim">— <span id="cost-std"></span>, noćni batch (do ~1–2 dana)</span></label>
+        <label class="tieropt"><input type="radio" name="tier" value="priority"> <b>⚡ Prioritet</b> <span class="dim">— <span id="cost-prio"></span>, obrada odmah (~15 min), poštuje sve izbore ispod</span></label>
       </div>
     </div>
+    ${renderJobChoiceFields()}
     <button type="submit"><span class="plus">+</span> Pošalji na obradu</button>
   </form>
   <div class="ytprev" id="ytprev" hidden>
@@ -84,12 +87,29 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
     <div class="ytprev-meta">
       <div class="ytprev-title" id="ytprev-title"></div>
       <div class="ytprev-sub"><span id="ytprev-chan" class="dim"></span></div>
+      <a id="ytprev-link" class="ytprev-link" target="_blank" rel="noopener">▶ otvori na YouTube</a>
     </div>
   </div>
-  <div class="hint" id="addmsg">Public ili unlisted — svejedno. Standard 1 kredit, prioritet 3. Gotov video je dostupan na <span class="mono">domovina.ai/v/{id}</span>.</div>
+  <div class="hint" id="notice">Public ili unlisted — svejedno. Gotov video je dostupan na <span class="mono">domovina.ai/v/{id}</span>.</div>
 </div>
 
 <div class="controls">
+  <label for="fState" class="dim">Status:</label>
+  <select id="fState">
+    <option value="">svi</option>
+    <option value="queued">queued</option>
+    <option value="fetching">fetching</option>
+    <option value="transcribing">transcribing</option>
+    <option value="processing">processing</option>
+    <option value="done">done</option>
+    <option value="failed">failed</option>
+  </select>
+  <input id="fQ" class="search" type="search" placeholder="traži ID / naslov / kanal…">
+  <label for="fLimit" class="dim">po stranici:</label>
+  <select id="fLimit">
+    <option>25</option><option selected>50</option><option>100</option><option>200</option>
+  </select>
+  <span class="spacer"></span>
   <span class="auto">● auto-refresh 10s</span>
   <span class="dim" id="updated"></span>
 </div>
@@ -97,312 +117,219 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
 <div class="table-wrap">
   <table>
     <thead><tr>
-      <th>Dodano</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th>
+      <th>Dodano</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th class="col-akcije">Akcije</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="5" class="empty">Učitavam…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
   </table>
 </div>
 
+<div class="pager">
+  <button id="pPrev">← Prethodna</button>
+  <button id="pNext">Sljedeća →</button>
+  <span class="info" id="pInfo"></span>
+</div>
+
+<dialog class="rpdlg" id="rpdlg">
+  <div class="addbox">
+    <form id="rpform" method="dialog">
+      <h2>🔁 Ponovna obrada</h2>
+      <p class="dim" id="rp-title" style="margin-top:0"></p>
+      ${renderReprocessFields({})}
+      <div class="hint" id="rp-msg"></div>
+      <p style="display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; margin-top:1rem;">
+        <button class="act" type="button" id="rp-cancel">Odustani</button>
+        <button class="act a-requeue" type="submit" id="rp-submit">🔁 Pokreni ponovnu obradu</button>
+      </p>
+    </form>
+  </div>
+</dialog>
+
 <script>
 var KEY = ${JSON.stringify(rawKey)};
-var H = { 'authorization': 'Bearer ' + KEY };
-var expandedId = '';
-
-function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function fmt(ts){ if(!ts) return ''; return new Date(ts*1000).toLocaleString('hr-HR'); }
-// thumb(j): za X nema ytimg thumbnail (sintetički id) → 𝕏 placeholder; inače ytimg.
-function thumb(j){ if(j && j.source_platform==='x') return '<div class="rthumb" style="display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:#0f1419;background:#E8F5FE;">𝕏</div>'; var id = (j && j.youtube_id!==undefined) ? j.youtube_id : j; return '<img class="rthumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(id)+'/mqdefault.jpg">'; }
-function dur(s){ if(!s) return ''; s=Math.round(s); var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60; var p=n=>String(n).padStart(2,'0'); return h? h+':'+p(m)+':'+p(x) : m+':'+p(x); }
-function pill(s){ return '<span class="pill '+s+'">'+s+'</span>'; }
-// Transkripcijski lock: koji backend (modal/colab) drži transkripciju. Prazno bez claima; nestaje na done/failed.
-function transcribeBadge(j){
-  if (j.transcribe_backend==='modal') return ' <span class="pill tb-modal" title="Transkribira Modal (serverless GPU)'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">⚡ Modal</span>';
-  if (j.transcribe_backend==='colab') return ' <span class="pill tb-colab" title="Transkribira Colab Canary batch'+(j.transcribe_claimed_at?' · zauzeto '+fmt(j.transcribe_claimed_at):'')+'">🧪 Colab</span>';
-  return '';
+var READ = '/api/v1', ACT = '/api/v1/jobs', H = { 'authorization': 'Bearer ' + KEY }, COLS = 6;
+${SHARED_CLIENT_JS}
+// ── Samo dashboard: krediti, akcije nad vlastitim jobom, ponovna obrada
+var credits = ${key.credits};
+function kredita(n){ return n+' '+(n===1?'kredit':'kredita'); }
+function trSel(){ var s=document.getElementById('transcription'); return s ? s.value : MODELS.defaults.transcription; }
+function paintCosts(){
+  document.getElementById('cost-std').textContent = kredita(COSTS.standard);
+  document.getElementById('cost-prio').textContent = kredita(COSTS.priority[trSel()]||COSTS.priority.speechmatics);
 }
-// Prioritet tier: ⚡ badge na prioritetnim jobovima (Modal instant put).
-function priorityBadge(j){
-  return j.priority ? ' <span class="pill prio" title="Prioritetna obrada (Modal, odmah)">⚡ Prioritet</span>' : '';
+function creditsStat(){
+  return '<div class="stat '+(credits>0?'s-done':'s-failed')+'"><div class="label">Preostali krediti</div><div class="value">'+credits+'</div></div>';
 }
-// Magisterium (re)obrada stanje po jeziku — badge u meta čeliji (kad zahtjev postoji).
-function magStateBadge(j){
-  function one(lang, st){
-    if (!st) return '';
-    var lbl = lang.toUpperCase();
-    var cls = st==='done'?'done':(st==='failed'?'failed':(st==='running'?'run':'wait'));
-    var glyph = st==='done'?'✓':(st==='failed'?'⚠':(st==='running'?'⏳':'⧗'));
-    return ' <span class="pill mag mag-'+cls+'" title="Magisterium '+lbl+': '+esc(st)+'">🕊 '+lbl+' '+glyph+'</span>';
+function setCredits(n){ if (typeof n==='number') credits = n; }
+function pbtn(cls, attrs, label, title){ return '<button class="act '+cls+'" '+attrs+' title="'+esc(title)+'">'+label+'</button>'; }
+// Akcije nad vlastitim jobom. Magisterium HR/EN samo za GOTOV video (sakriveni dok je zahtjev u tijeku).
+function actions(j){
+  var b = [];
+  if (j.state==='queued' && !j.priority) {
+    var up = (COSTS.priority[j.transcription]||COSTS.priority.speechmatics) - (j.credit_cost||COSTS.standard);
+    b.push(pbtn('a-prioritize', 'data-prio="'+esc(j.id)+'"', '⚡ Forsiraj sada', 'Obradi odmah preko Modala — naplati razliku ('+kredita(up)+')'));
   }
-  return one('hr', j.mag_hr_state)+one('en', j.mag_en_state);
+  if (j.state==='done' && j.source!=='import') b.push(pbtn('a-requeue', 'data-rp="'+esc(j.id)+'"', '🔁 Ponovna obrada', 'Podigni epizodu na razinu nove: prijepis, članak, Magisterium — po izboru'));
+  if (j.state==='done') {
+    var hrBusy = j.mag_hr_state==='queued' || j.mag_hr_state==='running';
+    var enBusy = j.mag_en_state==='queued' || j.mag_en_state==='running';
+    if (!hrBusy) b.push(pbtn('a-magisterium-hr', 'data-mag="'+esc(j.id)+'" data-lang="hr"', '🕊 Mag HR', j.mag_hr_state==='done'?'Ponovno Magisterium HR':'Pokreni Magisterium HR'));
+    if (!enBusy) b.push(pbtn('a-magisterium-en', 'data-mag="'+esc(j.id)+'" data-lang="en"', '🕊 Mag EN', j.mag_en_state==='done'?'Ponovno Magisterium EN overlay':'Pokreni Magisterium EN overlay'));
+  }
+  // Uvezena epizoda nije korisnikova obrada → bez selecta modela.
+  return '<div class="actwrap">'+b.join('')+'</div>'+(j.source==='import' ? '' : modelSelects(j));
 }
-// Magisterium one-click gumbi (samo za GOTOV video; sakriveni dok je zahtjev queued/running).
-function magBtns(j){
-  if (j.state!=='done') return '';
-  var out='';
-  var hrBusy = j.mag_hr_state==='queued' || j.mag_hr_state==='running';
-  var enBusy = j.mag_en_state==='queued' || j.mag_en_state==='running';
-  if (!hrBusy) out+='<button class="pillbtn mag-btn" data-mag="'+esc(j.id)+'" data-lang="hr" title="'+(j.mag_hr_state==='done'?'Ponovno Magisterium HR':'Pokreni Magisterium HR')+'">🕊 HR</button>';
-  if (!enBusy) out+='<button class="pillbtn mag-btn" data-mag="'+esc(j.id)+'" data-lang="en" title="'+(j.mag_en_state==='done'?'Ponovno Magisterium EN overlay':'Pokreni Magisterium EN overlay')+'">🕊 EN</button>';
-  return out;
+// Poziv na /api/v1 s porukom u #notice; vraća {r, d} ili null na mrežnu grešku.
+async function call(path, body, pending){
+  notify(pending);
+  try {
+    var r = await fetch('/api/v1'+path, { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify(body||{}) });
+    var d = await r.json().catch(function(){ return {}; });
+    setCredits(d.credits_remaining);
+    return { r: r, d: d };
+  } catch(e) { notify('⚠ Mrežna greška.'); return null; }
 }
-// Pokreni Magisterium (HR/EN) za vlastiti gotov video.
+function creditsError(d){ return '⚠ Nema dovoljno kredita (treba '+(d.required||1)+', imaš '+(d.credits_remaining!=null?d.credits_remaining:0)+'). Javi se administratoru za dopunu.'; }
 async function runMagisterium(id, lang){
-  var msg = document.getElementById('addmsg');
-  msg.textContent = 'Šaljem Magisterium '+lang.toUpperCase()+' zahtjev…';
-  try {
-    var r = await fetch('/api/v1/jobs/'+id+'/magisterium', { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify({ lang: lang }) });
-    var d = await r.json().catch(function(){ return {}; });
-    if (r.status === 409) { msg.textContent = '⚠ ' + (d.error || 'Video još nije gotov.'); }
-    else if (r.ok && d.deduped) { msg.textContent = '✓ Magisterium '+lang.toUpperCase()+' je već u redu / u tijeku.'; }
-    else if (r.ok) { msg.textContent = '✓ Magisterium '+lang.toUpperCase()+' pokrenut — obrada kreće uskoro.'; }
-    else { msg.textContent = '⚠ ' + (d.error || 'Greška.'); }
-  } catch(e){ msg.textContent = '⚠ Mrežna greška.'; }
+  var x = await call('/jobs/'+id+'/magisterium', { lang: lang }, 'Šaljem Magisterium '+lang.toUpperCase()+' zahtjev…');
+  if (x) {
+    if (x.r.status === 409) notify('⚠ ' + (x.d.error || 'Video još nije gotov.'));
+    else if (x.r.ok && x.d.deduped) notify('✓ Magisterium '+lang.toUpperCase()+' je već u redu / u tijeku.');
+    else if (x.r.ok) notify('✓ Magisterium '+lang.toUpperCase()+' pokrenut — obrada kreće uskoro.');
+    else notify('⚠ ' + (x.d.error || 'Greška.'));
+  }
   refresh();
 }
-
-// "Forsiraj sada": digni queued standard job na prioritet (naplati razliku 2 kredita).
+// "Forsiraj sada": digni queued standard job na prioritet (naplati razliku).
 async function prioritize(id){
-  var msg = document.getElementById('addmsg');
-  msg.textContent = 'Dižem na prioritet…';
-  try {
-    var r = await fetch('/api/v1/jobs/'+id+'/prioritize', { method:'POST', headers: H });
-    var d = await r.json().catch(function(){ return {}; });
-    if (r.status === 402) { msg.textContent = '⚠ Nema dovoljno kredita za prioritet (treba ' + (d.required||2) + ').'; }
-    else if (r.status === 409) { msg.textContent = '⚠ ' + (d.error || 'Job je već krenuo.'); }
-    else if (r.ok) { msg.textContent = '⚡ Prebačeno na prioritet. Preostalo kredita: ' + (d.credits_remaining!=null?d.credits_remaining:'—'); }
-    else { msg.textContent = '⚠ ' + (d.error || 'Greška.'); }
-  } catch(e){ msg.textContent = '⚠ Mrežna greška.'; }
+  var x = await call('/jobs/'+id+'/prioritize', {}, 'Dižem na prioritet…');
+  if (x) {
+    if (x.r.status === 402) notify(creditsError(x.d));
+    else if (x.r.status === 409) notify('⚠ ' + (x.d.error || 'Job je već krenuo.'));
+    else if (x.r.ok) notify('⚡ Prebačeno na prioritet. Preostalo kredita: ' + credits);
+    else notify('⚠ ' + (x.d.error || 'Greška.'));
+  }
   refresh();
 }
 
-function statusCell(j){
-  var open = expandedId===j.id;
-  return pill(j.state)+'<div><button class="pillbtn" data-jobid="'+esc(j.id)+'" aria-expanded="'+(open?'true':'false')+'">'+(open?'▾':'▸')+' koraci</button></div>';
+// ── Dijalog ponovne obrade (isti izbori kao admin; server odlučuje isto, types.ts)
+var rpJob = null, rpDlg = document.getElementById('rpdlg'), rpForm = document.getElementById('rpform');
+var rpUpd = wireReprocess(rpForm);
+function rpCost(){
+  var t = rpForm.querySelector('input[name=transcription]:checked');
+  return COSTS.priority[t ? t.value : 'speechmatics'];
 }
-function detailRow(j){
-  var fOpen = filesOpen && expandedId===j.id;
-  return '<tr class="detail-row" data-detail="'+esc(j.id)+'"'+(expandedId===j.id?'':' hidden')+'>'+
-    '<td colspan="5"><div class="steps-head">Pipeline koraci'+
-    ' <button class="pillbtn files-btn" data-filesjob="'+esc(j.id)+'" aria-expanded="'+(fOpen?'true':'false')+'" style="margin-left:.5rem;" title="Sve datoteke ovog videa na CDN-u">📁 datoteke</button></div>'+
-    '<div id="steps-'+esc(j.id)+'"><div class="steps-loading">Učitavam korake…</div></div>'+
-    '<div id="files-'+esc(j.id)+'"'+(fOpen?'':' hidden')+'></div></td></tr>';
+function paintRpCost(){ document.getElementById('rp-submit').textContent = '🔁 Pokreni ponovnu obradu — '+kredita(rpCost()); }
+rpForm.addEventListener('change', paintRpCost);
+function openReprocess(j){
+  rpJob = j;
+  document.getElementById('rp-title').textContent = (j.title||j.youtube_id);
+  document.getElementById('rp-msg').textContent = '';
+  rpForm.querySelector('select[name=article_model]').value = articleValue(j);
+  rpForm.querySelector('select[name=magisterium_model]').value = j.magisterium_model || MODELS.defaults.magisterium;
+  rpUpd(); paintRpCost();
+  rpDlg.showModal();
 }
-function stepBadge(st){ return st==='done'?'gotovo':st==='skipped'?'preskočeno':'čeka'; }
-function stepGlyph(st){ return st==='done'?'✓':st==='skipped'?'–':''; }
-// Trajanje u ljudskom obliku (45s / 12 min / 3h 20min / 6d 4h). Isto ponašanje kao u
-// /admin — obje površine čitaju isti timing iz izvještaja, pa ne smiju prikazivati različito.
-// NB: bez backtickova u komentarima — cijeli <script> živi u template literalu.
-function fmtDur(sec){
-  if (sec===null || sec===undefined) return '';
-  sec = Math.max(0, Math.round(sec));
-  if (sec < 60) return sec+'s';
-  var m = Math.floor(sec/60);
-  if (sec < 3600) return m+' min';
-  var h = Math.floor(m/60);
-  if (sec < 86400) return h+'h '+(m%60)+'min';
-  return Math.floor(h/24)+'d '+(h%24)+'h';
-}
-function fmtAt(ts){
-  if (!ts) return '';
-  return new Date(ts*1000).toLocaleString('hr-HR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-}
-function renderTiming(t){
-  if (!t) return '';
-  var cells = [];
-  if (t.queued_at) cells.push(['U queue', fmtAt(t.queued_at), '']);
-  if (t.start_at)  cells.push(['Početak', fmtAt(t.start_at), '']);
-  if (t.end_at)    cells.push(['Kraj', fmtAt(t.end_at), '']);
-  if (t.total_seconds !== null && t.total_seconds !== undefined) cells.push(['Ukupno', fmtDur(t.total_seconds), 'total']);
-  if (!cells.length) return '';
-  return '<div class="timing">'+cells.map(function(c){
-    return '<div class="t-cell'+(c[2]==='total'?' t-total':'')+'"><div class="t-label">'+esc(c[0])+'</div><div class="t-val">'+esc(c[1])+'</div></div>';
-  }).join('')+'</div>'+
-  '<div class="timing-note">Vrijeme uz korak je trenutak objave njegovog rezultata; Δ je razmak do prethodnog koraka i uključuje čekanje na red, ne samo obradu. „Ukupno" je raspon od prvog do zadnjeg koraka.</div>';
-}
-function renderSteps(steps, timing){
-  if (!steps || !steps.length) return '<div class="steps-loading">Nema podataka o koracima.</div>';
-  return renderTiming(timing)+'<ul class="steps">'+steps.map(function(s){
-    var cls = s.state;
-    var link = s.url ? '<a class="s-open" href="'+esc(s.url)+'" target="_blank" rel="noopener">↗ otvori</a>' : '';
-    var when = s.at ? '<span class="s-when">'+esc(fmtAt(s.at))+'</span>' : '';
-    var delta = '';
-    if (s.delta_seconds !== null && s.delta_seconds !== undefined) {
-      delta = '<span class="s-delta" title="Od prethodnog koraka">+'+esc(fmtDur(s.delta_seconds))+'</span>';
-    } else if (s.out_of_order) {
-      delta = '<span class="s-delta reissue" title="Rezultat je naknadno ponovno objavljen">↺ ponovna objava</span>';
-    }
-    var time = (when||delta) ? '<div class="s-time">'+when+delta+'</div>' : '';
-    return '<li class="is-'+cls+'"><span class="dot '+cls+'">'+stepGlyph(s.state)+'</span>'+
-      '<div class="s-main"><div class="s-label">'+esc(s.label)+'</div><div class="s-note">'+esc(s.note)+'</div>'+time+'</div>'+
-      link+'<span class="pill s-badge '+cls+'">'+stepBadge(s.state)+'</span></li>';
-  }).join('')+'</ul>';
-}
-async function loadSteps(id){
-  var host = document.getElementById('steps-'+id);
-  if (!host) return;
+document.getElementById('rp-cancel').addEventListener('click', function(){ rpDlg.close(); });
+rpForm.addEventListener('submit', async function(e){
+  e.preventDefault();
+  if (!rpJob) return;
+  var f = rpForm, t = f.querySelector('input[name=transcription]:checked'), m = f.querySelector('input[name=article_mode]:checked');
+  var msg = document.getElementById('rp-msg');
+  msg.textContent = 'Šaljem…';
   try {
-    var r = await fetch('/api/v1/jobs/'+id+'/pipeline', { headers: H });
-    if (!r.ok) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; return; }
-    var data = await r.json();
-    host.innerHTML = renderSteps(data.steps, data.timing);
-  } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu koraka.</div>'; }
-}
-// ── CDN datoteke joba (lazy, /api/v1/jobs/:id/files) ──
-// Cache renderiranog HTML-a po jobu: refresh() svakih 10s re-rendera retke pa
-// otvoreni panel obnavljamo iz cachea bez ponovnog fetcha (sadržaj se rijetko mijenja).
-var filesOpen = false;
-var filesCache = {};
-function fmtSize(b){
-  if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
-  if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
-  if (b >= 1024) return Math.round(b/1024)+' KB';
-  return b+' B';
-}
-function renderFiles(data){
-  var out = '';
-  (data.groups||[]).forEach(function(g){
-    var tot = 0; (g.files||[]).forEach(function(f){ tot += f.size; });
-    out += '<div class="steps-head" style="margin-top:.8rem;">'+esc(g.label)+
-      ' <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:600;">· '+g.files.length+' · '+fmtSize(tot)+'</span></div>';
-    if (!g.files.length) { out += '<div class="steps-loading">Nema datoteka.</div>'; return; }
-    out += g.files.map(function(f){
-      var rel = f.key.slice(g.prefix.length);
-      var when = f.uploaded ? new Date(f.uploaded).toLocaleString('hr-HR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
-      return '<div style="padding:.15rem 0;overflow-wrap:anywhere;"><a class="mono" href="'+esc(data.cdn_base+'/'+f.key)+'" target="_blank" rel="noopener">'+esc(rel)+'</a>'+
-        ' <span class="dim" style="white-space:nowrap;">— '+fmtSize(f.size)+(when?' · '+when:'')+'</span></div>';
-    }).join('');
-  });
-  return out || '<div class="steps-loading">Nema datoteka na CDN-u.</div>';
-}
-async function loadFiles(id){
-  var host = document.getElementById('files-'+id);
-  if (!host) return;
-  if (filesCache[id]) { host.innerHTML = filesCache[id]; return; }
-  host.innerHTML = '<div class="steps-loading">Učitavam datoteke…</div>';
-  try {
-    var r = await fetch('/api/v1/jobs/'+id+'/files', { headers: H });
-    if (!r.ok) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu datoteka.</div>'; return; }
-    var data = await r.json();
-    filesCache[id] = renderFiles(data);
-    host.innerHTML = filesCache[id];
-  } catch(e) { host.innerHTML = '<div class="steps-loading">Greška pri dohvatu datoteka.</div>'; }
-}
-function toggleFiles(id){
-  if (expandedId !== id) return;
-  filesOpen = !filesOpen;
-  var host = document.getElementById('files-'+id);
-  if (host) host.hidden = !filesOpen;
-  document.querySelectorAll('button.files-btn').forEach(function(b){
-    b.setAttribute('aria-expanded', (filesOpen && b.dataset.filesjob===id)?'true':'false');
-  });
-  if (filesOpen) loadFiles(id);
-}
-function toggleSteps(id){
-  expandedId = (expandedId===id) ? '' : id;
-  // Zatvaranje/promjena retka resetira files panel (inače bi stari sadržaj ostao vidljiv).
-  filesOpen = false;
-  document.querySelectorAll('div[id^="files-"]').forEach(function(d){ d.hidden = true; });
-  document.querySelectorAll('button.files-btn').forEach(function(b){ b.setAttribute('aria-expanded','false'); });
-  document.querySelectorAll('tr.detail-row').forEach(function(tr){ tr.hidden = tr.dataset.detail!==expandedId; });
-  document.querySelectorAll('button.pillbtn').forEach(function(b){
-    var on = b.dataset.jobid===expandedId;
-    b.setAttribute('aria-expanded', on?'true':'false');
-    b.textContent = (on?'▾':'▸')+' koraci';
-  });
-  if (expandedId) loadSteps(expandedId);
-}
+    var r = await fetch('/api/v1/jobs/'+rpJob.id+'/reprocess', { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify({
+      transcription: t ? t.value : undefined,
+      article_mode: m ? m.value : undefined,
+      article_model: f.querySelector('select[name=article_model]').value,
+      with_magisterium: f.querySelector('input[name=with_magisterium]').checked,
+      magisterium_model: f.querySelector('select[name=magisterium_model]').value,
+    }) });
+    var d = await r.json().catch(function(){ return {}; });
+    setCredits(d.credits_remaining);
+    if (r.status === 402) { msg.textContent = creditsError(d); return; }
+    if (!r.ok) { msg.textContent = '⚠ ' + (d.error || 'Greška.'); return; }
+    rpDlg.close();
+    notify('🔁 Ponovna obrada pokrenuta. Preostalo kredita: ' + credits);
+  } catch(e2) { msg.textContent = '⚠ Mrežna greška.'; return; }
+  refresh();
+});
 
+var lastJobs = {};
 async function refresh(){
+  if (refreshBlocked() || rpDlg.open) return;
   try {
-    var r = await fetch('/api/v1/jobs?limit=100', { headers: H });
+    var r = await fetch(READ+'/jobs'+listQs(), { headers: H });
     if (!r.ok) return;
     var data = await r.json();
-    if (typeof data.credits_remaining === 'number') document.getElementById('credits').textContent = data.credits_remaining;
+    setCredits(data.credits_remaining);
+    renderStats(data.counts, creditsStat());
+    lastJobs = {};
     var rows = (data.jobs||[]).map(function(j){
+      lastJobs[j.id] = j;
       // Izvor: X (source_url = originalni X post) ili YouTube. youtube_id je za X
       // sintetički → NE gradi youtu.be link; koristi source_url iz baze.
       var isX = j.source_platform === 'x';
       var srcUrl = j.source_url ? esc(j.source_url) : (isX ? '' : 'https://youtu.be/'+esc(j.youtube_id));
       var srcTitle = isX ? 'Izvorni X post' : 'Izvorni YouTube video';
       var domUrl = j.detail_url ? esc(j.detail_url) : '';
-      var links = (srcUrl ? '<a class="mono vlink" href="'+srcUrl+'" target="_blank" rel="noopener" title="'+srcTitle+'">'+(isX?'𝕏 '+srcUrl:srcUrl)+'</a>' : '')
+      var links = (srcUrl ? '<a class="mono vlink" href="'+srcUrl+'" target="_blank" rel="noopener" title="'+srcTitle+': '+srcUrl+'">'+(isX?'𝕏 '+srcUrl:srcUrl)+'</a>' : '')
                 + (domUrl ? '<a class="mono vlink" href="'+domUrl+'" target="_blank" rel="noopener" title="Objavljeno na domovina.ai">'+domUrl+'</a>'
                           : '<span class="mono vlink dim">domovina.ai — čeka objavu</span>');
       var vid = '<div class="vidcell">'+thumb(j)+'<div class="vlinks">'+links+'</div></div>';
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
-      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+priorityBadge(j)+transcribeBadge(j)+magStateBadge(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'');
-      // Rezultat: link kad gotovo (+ Magisterium HR/EN one-click); inače prioritet/greška.
-      var res;
-      if (j.detail_url) res = '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'+(magBtns(j)?'<div style="display:flex;gap:.3rem;margin-top:.35rem;flex-wrap:wrap;">'+magBtns(j)+'</div>':'');
-      else if (j.state==='queued' && !j.priority) res = '<button class="pillbtn prio-btn" data-prio="'+esc(j.id)+'" title="Obradi odmah preko Modala — naplati razliku (2 kredita)">⚡ Forsiraj sada</button>';
-      else if (j.state==='failed' && j.error) res = '<span class="dim">'+esc(j.error).slice(0,80)+'</span>';
-      else res = '<span class="dim">—</span>';
+      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+jobBadges(j)+'</div>';
+      var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
+              : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       // data-l = labela kolone za mobile karticu (CSS ::before)
-      return '<tr><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Rezultat">'+res+'</td></tr>' + detailRow(j);
+      return '<tr><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>' + detailRow(j);
     }).join('');
-    document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5" class="empty">Još nema obrada. Pošalji prvu gore.</td></tr>';
-    document.getElementById('updated').textContent = 'osvježeno ' + new Date().toLocaleTimeString('hr-HR');
-    if (expandedId && document.getElementById('steps-'+expandedId)) loadSteps(expandedId);
-    if (expandedId && filesOpen && document.getElementById('files-'+expandedId)) loadFiles(expandedId);
+    document.getElementById('rows').innerHTML = rows || emptyRow((pState||pQ)?'Nema rezultata za filter.':'Još nema obrada. Pošalji prvu gore.');
+    updatePager(data);
+    reloadExpanded();
   } catch(e) {}
 }
 
-// oEmbed preview (public/unlisted; private/obrisan → tiho preskoči)
-(function(){
-  var urlEl = document.getElementById('url'), prev = document.getElementById('ytprev'), lastId='', timer=null;
-  function ytId(s){ s=(s||'').trim(); if(/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
-    var m = s.match(/[?&]v=([A-Za-z0-9_-]{11})|youtu[.]be[/]([A-Za-z0-9_-]{11})|[/]shorts[/]([A-Za-z0-9_-]{11})|[/]live[/]([A-Za-z0-9_-]{11})|[/]v[/]([A-Za-z0-9_-]{11})/);
-    return m ? (m[1]||m[2]||m[3]||m[4]||m[5]) : ''; }
-  async function prefill(){
-    var id = ytId(urlEl.value);
-    if (!id){ prev.hidden = true; lastId=''; return; }
-    if (id===lastId) return; lastId=id;
-    try {
-      var u = 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v='+id);
-      var r = await fetch(u); if(!r.ok){ prev.hidden=true; return; }
-      var j = await r.json();
-      document.getElementById('ytprev-thumb').src = j.thumbnail_url||'';
-      document.getElementById('ytprev-title').textContent = j.title||'';
-      document.getElementById('ytprev-chan').textContent = j.author_name ? ('Kanal: '+j.author_name) : '';
-      prev.hidden = false;
-    } catch(e){ prev.hidden = true; }
-  }
-  urlEl.addEventListener('input', function(){ clearTimeout(timer); timer=setTimeout(prefill,400); });
-})();
-
-// Enqueue preko /api/v1/jobs (isti kreditni put kao programatski API).
+// Enqueue preko /api/v1/jobs (isti kreditni put kao programatski API) — svi izbori iz forme.
 document.getElementById('addform').addEventListener('submit', async function(e){
   e.preventDefault();
-  var msg = document.getElementById('addmsg');
-  var url = document.getElementById('url').value.trim();
-  var title = document.getElementById('title').value.trim();
+  // f.elements[…], ne f.title: form.title je atribut same forme, ne polje „title".
+  var f = e.target, el = function(n){ return f.elements.namedItem(n); };
+  var url = el('url').value.trim();
   if (!url) return;
-  var tier = (document.querySelector('input[name=tier]:checked')||{}).value || 'standard';
-  msg.textContent = 'Šaljem…';
-  try {
-    var r = await fetch('/api/v1/jobs', { method:'POST', headers: Object.assign({'content-type':'application/json'}, H), body: JSON.stringify({ url: url, title: title || undefined, tier: tier }) });
-    var d = await r.json().catch(function(){ return {}; });
-    if (r.status === 402) { msg.textContent = '⚠ Nema dovoljno kredita (treba ' + (d.required||1) + ', imaš ' + (d.credits_remaining!=null?d.credits_remaining:0) + '). Javi se administratoru za dopunu.'; }
-    else if (r.ok && d.already_published) { msg.innerHTML = '✓ Već objavljeno — dodano u tvoju listu (nije naplaćeno). <a href="'+esc(d.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'; document.getElementById('url').value=''; document.getElementById('title').value=''; document.getElementById('ytprev').hidden=true; }
-    else if (r.ok && d.deduped) { msg.textContent = '✓ Već je u obradi — nije naplaćeno.'; }
-    else if (r.ok && d.job) { msg.textContent = '✓ Poslano na obradu. Preostalo kredita: ' + (d.credits_remaining!=null?d.credits_remaining:'—'); document.getElementById('url').value=''; document.getElementById('title').value=''; document.getElementById('ytprev').hidden=true; }
-    else { msg.textContent = '⚠ ' + (d.error || 'Greška pri slanju.'); }
-  } catch(e){ msg.textContent = '⚠ Mrežna greška.'; }
+  var x = await call('/jobs', {
+    url: url,
+    title: el('title').value.trim() || undefined,
+    tier: (f.querySelector('input[name=tier]:checked')||{}).value || 'standard',
+    transcription: el('transcription').value,
+    article_model: el('article_model').value,
+    with_magisterium: el('with_magisterium').checked,
+    magisterium_model: el('magisterium_model').value,
+  }, 'Šaljem…');
+  if (x) {
+    var d = x.d, clear = function(){ el('url').value=''; el('title').value=''; document.getElementById('ytprev').hidden=true; };
+    if (x.r.status === 402) notify(creditsError(d));
+    else if (x.r.ok && d.already_published) { notify('✓ Već objavljeno — dodano u tvoju listu (nije naplaćeno).'); clear(); }
+    else if (x.r.ok && d.deduped) notify('✓ Već je u obradi — nije naplaćeno.');
+    else if (x.r.ok && d.job) { notify('✓ Poslano na obradu. Preostalo kredita: ' + credits); clear(); }
+    else notify('⚠ ' + (d.error || 'Greška pri slanju.'));
+  }
   refresh();
 });
 
 document.getElementById('rows').addEventListener('click', function(e){
-  var mb = e.target.closest('button.mag-btn');
+  if (handleRowClick(e)) return;
+  var mb = e.target.closest('button[data-mag]');
   if (mb) { runMagisterium(mb.dataset.mag, mb.dataset.lang); return; }
-  var pb = e.target.closest('button.prio-btn');
+  var pb = e.target.closest('button[data-prio]');
   if (pb) { prioritize(pb.dataset.prio); return; }
-  // Files gumb PRIJE generičkog pillbtn — dijeli klasu, ali nema data-jobid.
-  var fb = e.target.closest('button.files-btn');
-  if (fb) { toggleFiles(fb.dataset.filesjob); return; }
-  var tog = e.target.closest('button.pillbtn');
-  if (tog && tog.dataset.jobid) toggleSteps(tog.dataset.jobid);
+  var rb = e.target.closest('button[data-rp]');
+  if (rb && lastJobs[rb.dataset.rp]) openReprocess(lastJobs[rb.dataset.rp]);
 });
+document.getElementById('transcription').addEventListener('change', paintCosts);
+paintCosts();
+wireListControls();
+wireAddForm();
 refresh();
 setInterval(refresh, 10000);
 </script>`;

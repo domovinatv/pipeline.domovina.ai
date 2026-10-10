@@ -187,6 +187,23 @@ export function parseTranscription(
   return (TRANSCRIPTIONS as readonly string[]).includes(value) ? (value as Transcription) : null;
 }
 
+// Ponovna obrada: novi prijepis UVIJEK povlači novi članak (poglavlja/citati starog ne
+// odgovaraju novom tekstu); „ne diraj članak" vrijedi samo uz 'none'. Jedno pravilo za
+// /admin formu i /api/v1 — klijentski UI ga samo zrcali (REPROCESS_WIRE_JS).
+export function reprocessRedoArticle(transcription: string, articleMode: string | null | undefined): boolean {
+  return transcription !== TRANSCRIPTION_NONE || articleMode !== 'keep';
+}
+
+// ───────────────────────── Krediti (API ključevi) ─────────────────────────
+// Speechmatics + Gemini sluh košta ~$2-2.5/ep naspram ~$0.01 za Canary, pa prioritetni job
+// s njim rezervira 2 kredita više. Standardni job ide kroz nightly (globalna konfiguracija)
+// pa za njega izbor transkripcije ne mijenja cijenu. Ponovna obrada je uvijek prioritetna;
+// bez novog prijepisa ('none') košta kao Canary.
+export const STANDARD_COST = 1;
+export function priorityCost(transcription: string): number {
+  return transcription === 'speechmatics' ? 5 : 3;
+}
+
 // Stanja koja lokalni bridge smije postaviti preko PATCH /api/jobs/:id.
 export const BRIDGE_SETTABLE: JobState[] = [
   'fetching',

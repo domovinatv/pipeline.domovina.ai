@@ -63,8 +63,28 @@ opasni za bridge: `spawnSync` s nizom argumenata, bez shella.
 | `omm.domovina.ai` (Astro) | nije ranjiv: Astro middlewareu daje već dekodiran `url`, isti koji koristi za routing (`/%61dmin/passkeys` → login) |
 | Access-only aplikacije (Grafana, studio, `api.domovina.ai/dashboard*`…) | Access na rubu hvata i enkodirane putanje (`/d%61shboard` → Access login) |
 
+## Obrana u dubinu (v0.20.0, 16.10.)
+
+Bypass je zatvoren, ali je pokazao da ništa nije ograničavalo **koliko** posla netko s
+admin pristupom (ili ključem s puno kredita) može ubaciti: admin enqueue ne troši kredite,
+`POST /admin/keys` je primao proizvoljan `credits`, a batch promote šalje cijelu podlistu
+kao prioritetnu s Magisteriumom. Bridge bi tempo sam ograničio (3 prioritetna / 90 s), ali
+red ide po `priority DESC, created_at ASC` — lažni prioritetni bi blokirali prave i trošili
+Speechmatics/Modal/LLM dok netko ne primijeti.
+
+| Kočnica | Gdje | Vrijednost |
+|---|---|---|
+| Najviše `queued` jobova ukupno / po API ključu | `createJob` (conditional `INSERT … SELECT … WHERE`), 429 | 50 / 10 |
+| Provjera prije skidanja kredita + refund ako INSERT padne na limitu | `/api/v1/jobs`, `/reprocess` | — |
+| Stanje kredita po ključu | `createApiKey`, `addApiKeyCredits` | 500 |
+| Prioritetnih claimova po lokalnom danu | `bridge/priority_poller.js`, lokalni fajl (vrijedi i kad je Worker kompromitiran) | 30 |
+
+Najveći legitimni dan dosad: 19 jobova (27.07.). Log oznake: `queue_full` (Worker),
+`priority_budget_exhausted` (bridge, jednom dnevno).
+
 ## Otvoreno
 
 - Obavijest ITalku / korisnicima za podatke pročitane iz pay admina — odluka vlasnika.
-- Alarm na `admin_encoded_path_rejected` i na `admin:unknown` u pay audit logu.
+- Alarm na `admin_encoded_path_rejected`, `queue_full`, `priority_budget_exhausted` i na
+  `admin:unknown` u pay audit logu (zasad samo u logu, nitko ne dobije obavijest).
 - Postmortem 0002 na pay `main` (spajanjem opensaas grane ili zasebno).

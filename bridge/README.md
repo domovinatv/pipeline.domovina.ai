@@ -19,6 +19,7 @@ export PIPELINE_QUEUE_INGEST_KEY="…"                        # OBAVEZNO (Bearer
 export FETCH_REPO="/Users/ms/git/domovinatv/fetch.domovina.tv"  # default: sibling ../fetch.domovina.tv
 export CLAIM_MAX="5"                                 # claim_and_dispatch
 export PRIORITY_MAX="3"                               # priority_poller
+export PRIORITY_DAILY_MAX="30"                        # priority_poller: dnevni budžet (lokalni, ~/.cache/domovina-pipeline/priority_budget.json)
 export CDN_BASE="https://cdn.domovina.ai"            # reconcile + magisterium_poller
 export SITE_BASE="https://domovina.ai"               # reconcile (detail_url)
 # magisterium_poller:

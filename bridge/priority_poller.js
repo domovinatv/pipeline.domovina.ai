@@ -19,6 +19,13 @@
  *   PIPELINE_QUEUE_INGEST_KEY  (obavezno — Bearer za /api/jobs/*)
  *   FETCH_REPO                 (default sibling ../fetch.domovina.tv)
  *   PRIORITY_MAX               (default 3 — koliko prioritetnih po ticku)
+ *   PRIORITY_DAILY_MAX         (default 30 — koliko prioritetnih po lokalnom danu, ukupno)
+ *   PRIORITY_BUDGET_FILE       (default ~/.cache/domovina-pipeline/priority_budget.json)
+ *
+ * Dnevni budžet je zadnja kočnica za novac (Speechmatics/Modal/LLM): drži se LOKALNO, pa
+ * vrijedi i kad je Worker/baza kompromitirana (incident 14.10. — kroz admin bypass moglo se
+ * ubaciti 10 000 prioritetnih jobova). Kad je potrošen, poller ne claima ništa do ponoći;
+ * jobovi čekaju u queued. Svjesno više za danas: PRIORITY_DAILY_MAX u plistu ili obriši fajl.
  */
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -28,6 +35,10 @@ const PIPELINE_QUEUE_BASE = process.env.PIPELINE_QUEUE_BASE || 'https://pipeline
 const INGEST_KEY = process.env.PIPELINE_QUEUE_INGEST_KEY;
 const FETCH_REPO = process.env.FETCH_REPO || path.resolve(__dirname, '..', '..', 'fetch.domovina.tv');
 const PRIORITY_MAX = parseInt(process.env.PRIORITY_MAX || '3', 10);
+const PRIORITY_DAILY_MAX = parseInt(process.env.PRIORITY_DAILY_MAX || '30', 10);
+const BUDGET_FILE =
+  process.env.PRIORITY_BUDGET_FILE ||
+  path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'priority_budget.json');
 const UNLISTED_DIR = path.join(FETCH_REPO, 'storage', 'output', '_unlisted');
 const RUN_PIPELINE = path.join(FETCH_REPO, 'run_pipeline.sh');
 const SITE_BASE = process.env.SITE_BASE || 'https://domovina.ai';
@@ -85,13 +96,46 @@ function readMeta(youtubeId) {
   }
 }
 
+// Lokalni datum (Mac Mini), ne UTC — "dan" kako ga vidi vlasnik.
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function readBudget() {
+  try {
+    const b = JSON.parse(fs.readFileSync(BUDGET_FILE, 'utf-8'));
+    if (b.date === today() && Number.isFinite(b.claimed)) return b;
+  } catch {}
+  return { date: today(), claimed: 0 };
+}
+
+function writeBudget(b) {
+  fs.mkdirSync(path.dirname(BUDGET_FILE), { recursive: true });
+  const tmp = BUDGET_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(b));
+  fs.renameSync(tmp, BUDGET_FILE);
+}
+
 (async () => {
-  const { jobs } = await api('POST', '/api/jobs/claim', { max: PRIORITY_MAX, priority: true });
+  const budget = readBudget();
+  const left = PRIORITY_DAILY_MAX - budget.claimed;
+  if (left <= 0) {
+    // Jednom dnevno glasno u log (tick je svakih 90 s), inače tiho.
+    if (!budget.warned) {
+      console.error(`⛔ priority_budget_exhausted: ${budget.claimed}/${PRIORITY_DAILY_MAX} prioritetnih danas — ne claimam do ponoći.`);
+      writeBudget({ ...budget, warned: true });
+    }
+    return;
+  }
+  const { jobs } = await api('POST', '/api/jobs/claim', { max: Math.min(PRIORITY_MAX, left), priority: true });
+  // Broji se claim, ne uspjeh: i neuspjeli run je mogao potrošiti plaćene korake.
+  if (jobs.length) writeBudget({ ...budget, claimed: budget.claimed + jobs.length });
   if (!jobs.length) {
     console.log('📭 Nema prioritetnih jobova.');
     return;
   }
-  console.log(`⚡ Claimano ${jobs.length} PRIORITETNIH jobova.`);
+  console.log(`⚡ Claimano ${jobs.length} PRIORITETNIH jobova (danas ${budget.claimed + jobs.length}/${PRIORITY_DAILY_MAX}).`);
   // Što fetch strana podržava (ugovor u plan.js). Čita se iz izvora, jer je fetch repo
   // radno stablo (bez verzija) — provjera PRIJE claimanog runa, ne nakon plaćenih koraka.
   const caps = {

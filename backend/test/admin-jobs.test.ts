@@ -63,7 +63,8 @@ function insertBinds(calls: Call[]): Record<string, unknown> {
   const ins = calls.find((c) => c.sql.includes('INSERT INTO jobs'));
   assert.ok(ins, 'job nije upisan');
   const cols = ins.sql.match(/INSERT INTO jobs \(([^)]+)\)/)![1].split(',').map((s) => s.trim());
-  const vals = ins.sql.match(/VALUES \(([^)]+)\)/)![1].split(',').map((s) => s.trim());
+  // INSERT … SELECT <vrijednosti> WHERE <limit reda> (db.ts createJob).
+  const vals = ins.sql.match(/SELECT (.+?)\s+WHERE \(/s)![1].split(',').map((s) => s.trim());
   const row: Record<string, unknown> = {};
   let b = 0;
   cols.forEach((c, i) => { row[c] = vals[i] === '?' ? ins.binds[b++] : vals[i]; });

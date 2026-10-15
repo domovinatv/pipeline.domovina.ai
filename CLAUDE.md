@@ -40,8 +40,14 @@ npm run deploy              # wrangler deploy
 - **Claim**: atomski conditional UPDATE (`state='queued'` guard), bez D1 transakcija.
 - **Producer granica**: stvarna obrada je u `../fetch.domovina.tv` (`fetch.js
   --unlisted-url`, `_`-kanal mehanizam). Ovaj repo NE obrađuje video, samo orkestrira queue.
-- **Billing**: `price_cents`/`paid`/`api_keys` su SKELA — postoje ali nisu ožičeni.
-  Ne uključuj naplatu bez eksplicitne odluke (plan: spoj na pay.domovina.ai intents).
+- **Billing**: `price_cents`/`paid` su SKELA (nema pay.domovina.ai intenta). Krediti
+  API ključeva SU ožičeni: `/api/v1` atomski skida kredit po jobu (402 bez njih).
+  Ne uključuj stvarnu naplatu bez eksplicitne odluke.
+- **Limiti (v0.20.0, nakon incidenta 14.10.)**: `createJob` odbija INSERT kad je u redu
+  ≥`MAX_QUEUED_TOTAL` (50) ili ≥`MAX_QUEUED_PER_KEY` (10) `queued` jobova → `QueueFullError`
+  → 429 (`errors.ts`). Krediti po ključu najviše `MAX_KEY_CREDITS` (500). Bridge
+  `priority_poller.js` ima lokalni dnevni budžet (`PRIORITY_DAILY_MAX`, 30). Svaki novi put
+  koji stvara job ide kroz `createJob` — ne piši INSERT u `jobs` mimo njega.
 
 ## MCP Proxy Bridgeovi
 

@@ -28,10 +28,11 @@ import {
   setJobMagisteriumModel,
   softDeleteJob,
   updateJob,
+  QueueFullError,
 } from '../db';
-import type { DiscoveredRow } from '../types';
+import type { DiscoveredRow, JobRow } from '../types';
 import { DEFAULT_TRANSCRIPTION, articleModelValue, parseArticleModel, parseMagisteriumModel, parseTranscription, reprocessRedoArticle } from '../types';
-import { cleanTitle, extractSourceRef, fetchOEmbed } from '../util';
+import { cleanTitle, escapeHtml, extractSourceRef, fetchOEmbed } from '../util';
 import { buildPipelineReport, isPublishedOnDomovina, listCdnFiles, reconcilePublishedJobs } from '../pipeline';
 import {
   layout,
@@ -117,6 +118,7 @@ admin.post('/jobs', async (c) => {
 
   // oEmbed radi samo za YouTube; za X bridge backfilla naslov/kanal iz info.json.
   const meta = ref.source === 'youtube' ? await fetchOEmbed(youtubeId) : null;
+  try {
   await createJob(c.env.DB, {
     youtubeId,
     youtubeUrl: ref.url,
@@ -137,6 +139,16 @@ admin.post('/jobs', async (c) => {
     reprocess,
     redoArticle,
   });
+  } catch (e) {
+    if (!(e instanceof QueueFullError)) throw e;
+    return c.html(
+      layout(
+        'DOMOVINA Pipeline — red je pun',
+        `<h1>Red je pun</h1><p>${escapeHtml(e.message)}</p><p><a href="/admin">← natrag</a></p>`,
+      ),
+      429,
+    );
+  }
   return c.redirect('/admin', 303);
 });
 
@@ -271,7 +283,7 @@ async function promoteDiscovered(
   env: Env,
   row: DiscoveredRow,
   models: { articleModel?: string; magisteriumModel?: string } = {},
-): Promise<{ ok: boolean; jobId?: string; deduped?: boolean; reason?: string }> {
+): Promise<{ ok: boolean; jobId?: string; deduped?: boolean; full?: boolean; reason?: string }> {
   if (row.state !== 'new') return { ok: false, reason: `već ${row.state}` };
   // Beamly audio-only (sintetički ID) nema pravi YouTube izvor — yt-dlp bi pao. Ne nudi se
   // u UI-u, ali API put gardiramo i ovdje.
@@ -286,7 +298,9 @@ async function promoteDiscovered(
   }
 
   const article = parseArticleModel(models.articleModel);
-  const job = await createJob(env.DB, {
+  let job: JobRow;
+  try {
+  job = await createJob(env.DB, {
     youtubeId: row.youtube_id,
     youtubeUrl: row.youtube_url,
     sourcePlatform: 'youtube',
@@ -302,6 +316,10 @@ async function promoteDiscovered(
     llmModel: article?.model,
     magisteriumModel: parseMagisteriumModel(models.magisteriumModel),
   });
+  } catch (e) {
+    if (e instanceof QueueFullError) return { ok: false, full: true, reason: e.message };
+    throw e;
+  }
   await markDiscoveredPromoted(env.DB, row.id, job.id);
   return { ok: true, jobId: job.id };
 }
@@ -320,7 +338,7 @@ admin.post('/discovered/:id/:action', async (c) => {
         articleModel: body.article_model,
         magisteriumModel: body.magisterium_model,
       });
-      return res.ok ? c.json(res) : c.json({ error: res.reason }, 409);
+      return res.ok ? c.json(res) : c.json({ error: res.reason }, res.full ? 429 : 409);
     }
     case 'dismiss':
       await setDiscoveredState(c.env.DB, row.id, 'dismissed');
@@ -346,12 +364,18 @@ admin.post('/discovered/batch/:date/promote', async (c) => {
   const rows = await listDiscovered(c.env.DB, { batchDate, state: 'new', limit: 500 });
   let promoted = 0;
   const skipped: string[] = [];
+  let full: string | undefined;
   for (const row of rows) {
     const res = await promoteDiscovered(c.env, row, models);
     if (res.ok) promoted++;
     else skipped.push(row.youtube_id);
+    // Pun red: ostatak podliste ostaje 'new' (može se poslati kasnije), ne vrti ostatak.
+    if (res.full) {
+      full = res.reason;
+      break;
+    }
   }
-  return c.json({ ok: true, promoted, skipped });
+  return c.json({ ok: true, promoted, skipped, full });
 });
 
 // JSON za auto-refresh: podliste (dnevni sažetci) + reci, grupirano na klijentu.

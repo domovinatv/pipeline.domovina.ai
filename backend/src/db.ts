@@ -112,13 +112,49 @@ export async function createImportedJob(
   return (await getJob(db, id))!;
 }
 
+// Gornja granica reda (incident 14.10.: kroz admin bypass moglo se ubaciti 10 000 jobova,
+// a svaki prioritetni troši Speechmatics/Modal/LLM). Brojimo samo 'queued' — ono što je
+// već uzeto ograničava bridge sam (PRIORITY_MAX po ticku + dnevni budžet).
+export const MAX_QUEUED_TOTAL = 50;
+export const MAX_QUEUED_PER_KEY = 10;
+
+export class QueueFullError extends Error {
+  constructor(readonly perKey: boolean) {
+    super(
+      perKey
+        ? `Previše jobova na čekanju za ovaj ključ (najviše ${MAX_QUEUED_PER_KEY}). Pričekaj da se obrade.`
+        : `Red je pun (najviše ${MAX_QUEUED_TOTAL} jobova na čekanju). Pokušaj kasnije.`,
+    );
+    this.name = 'QueueFullError';
+  }
+}
+
+const QUEUED_COUNT = `SELECT COUNT(*) FROM jobs WHERE state = 'queued' AND deleted_at IS NULL`;
+
+// Brza provjera PRIJE skidanja kredita (v1), da se ne mora refundirati. Nosiva je
+// tek provjera u samom INSERT-u u createJob (atomska, bez utrke).
+export async function assertQueueCapacity(db: D1Database, apiKeyId?: string | null): Promise<void> {
+  const total = await db.prepare(QUEUED_COUNT).first<number>('COUNT(*)');
+  if ((total ?? 0) >= MAX_QUEUED_TOTAL) throw new QueueFullError(false);
+  if (apiKeyId) {
+    const mine = await db.prepare(`${QUEUED_COUNT} AND api_key_id = ?`).bind(apiKeyId).first<number>('COUNT(*)');
+    if ((mine ?? 0) >= MAX_QUEUED_PER_KEY) throw new QueueFullError(true);
+  }
+}
+
+// Baca QueueFullError kad je red pun (globalno ili za taj API ključ) — job tada NE nastaje.
 export async function createJob(db: D1Database, input: CreateJobInput): Promise<JobRow> {
   const id = newId();
   const ts = nowSec();
-  await db
+  const keyId = input.apiKeyId ?? null;
+  // Conditional INSERT … SELECT … WHERE: limit se provjerava u istoj naredbi (kao claim guard),
+  // pa ni paralelni zahtjevi ne mogu prebaciti granicu.
+  const res = await db
     .prepare(
       `INSERT INTO jobs (id, youtube_id, youtube_url, source_platform, source_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, llm_backend, llm_model, magisterium_model, transcription, reprocess, redo_article, attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?
+       WHERE (${QUEUED_COUNT}) < ?
+         AND (? IS NULL OR (${QUEUED_COUNT} AND api_key_id = ?) < ?)`,
     )
     .bind(
       id,
@@ -129,7 +165,7 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.title ?? null,
       input.channel ?? null,
       input.source ?? 'admin',
-      input.apiKeyId ?? null,
+      keyId,
       input.priceCents ?? 0,
       input.priority ?? 0,
       input.creditCost ?? 1,
@@ -148,8 +184,17 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.redoArticle === false ? 0 : 1,
       ts,
       ts,
+      MAX_QUEUED_TOTAL,
+      keyId,
+      keyId,
+      MAX_QUEUED_PER_KEY,
     )
     .run();
+  if ((res.meta.changes ?? 0) !== 1) {
+    // Koja je granica pala (za poruku); ako se red u međuvremenu ispraznio, svejedno globalna.
+    await assertQueueCapacity(db, keyId);
+    throw new QueueFullError(false);
+  }
   // Zaveži podlistu OVDJE, a ne na pozivnim mjestima: job nastaje iz /admin forme, /api/jobs,
   // /api/v1/jobs i promote-a iz podliste — jedno mjesto znači da se ni na jednom putu ne može
   // zaboraviti. Za promote je no-op (redak je već 'promoted' prije ovog poziva).
@@ -502,7 +547,7 @@ export async function createApiKey(
     .prepare(
       `INSERT INTO api_keys (id, name, key_hash, credits, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)`,
     )
-    .bind(id, name, keyHash, Math.max(0, Math.floor(credits) || 0), ts)
+    .bind(id, name, keyHash, Math.min(MAX_KEY_CREDITS, Math.max(0, Math.floor(credits) || 0)), ts)
     .run();
   return { row: (await getApiKey(db, id))!, rawKey };
 }
@@ -539,11 +584,16 @@ export async function setApiKeyEnabled(
   await db.prepare(`UPDATE api_keys SET enabled = ? WHERE id = ?`).bind(enabled ? 1 : 0, id).run();
 }
 
-// Dopuni (ili oduzmi) kredite; ne ide ispod 0. Ručni top-up dok nema pay.domovina.ai veze.
+// Gornja granica stanja kredita po ključu: ključ s milijun kredita (incident 14.10.) bi
+// zaobišao naplatu kao kočnicu. Veći iznos = svjesna promjena ovdje + deploy.
+export const MAX_KEY_CREDITS = 500;
+
+// Dopuni (ili oduzmi) kredite; ne ide ispod 0 ni iznad MAX_KEY_CREDITS. Ručni top-up dok
+// nema pay.domovina.ai veze. Refund (v1) ide istim putem pa ni on ne prelazi granicu.
 export async function addApiKeyCredits(db: D1Database, id: string, delta: number): Promise<void> {
   await db
-    .prepare(`UPDATE api_keys SET credits = MAX(0, credits + ?) WHERE id = ?`)
-    .bind(Math.floor(delta) || 0, id)
+    .prepare(`UPDATE api_keys SET credits = MIN(?, MAX(0, credits + ?)) WHERE id = ?`)
+    .bind(MAX_KEY_CREDITS, Math.floor(delta) || 0, id)
     .run();
 }
 

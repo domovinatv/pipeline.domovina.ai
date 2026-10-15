@@ -15,6 +15,7 @@
 import type { ApiKeyRow } from '../types';
 import { DEFAULT_ARTICLE_MODEL, DEFAULT_MAGISTERIUM_MODEL } from '../types';
 import { escapeHtml } from '../util';
+import { MAX_KEY_CREDITS } from '../db';
 import {
   REPROCESS_WIRE_JS,
   SHARED_CLIENT_JS,
@@ -27,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.19.0';
+export const APP_VERSION = 'v0.20.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -1013,7 +1014,7 @@ async function promoteAll(date, n){
       method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(modelBody())
     });
     var j = await r.json().catch(function(){ return {}; });
-    if (j && typeof j.promoted === 'number') alert('Poslano: '+j.promoted+(j.skipped && j.skipped.length ? ' · preskočeno: '+j.skipped.length : ''));
+    if (j && typeof j.promoted === 'number') alert('Poslano: '+j.promoted+(j.skipped && j.skipped.length ? ' · preskočeno: '+j.skipped.length : '')+(j.full ? '\\n'+j.full : ''));
   } catch(e) { alert('Mrežna greška.'); }
   refresh();
 }
@@ -1091,7 +1092,7 @@ export function renderKeysPage(keys: ApiKeyRow[], flash?: { rawKey: string; name
       <td class="dim" data-l="Zadnje korišteno">${fmtTs(k.last_used_at)}</td>
       <td data-l="Akcije">
         <form method="POST" action="/admin/keys/${k.id}/credits" class="keyact">
-          <input type="number" name="amount" value="10" step="1" class="cred-inp" aria-label="iznos kredita (negativno = oduzmi)">
+          <input type="number" name="amount" value="10" step="1" class="cred-inp" aria-label="iznos kredita (negativno = oduzmi; stanje najviše ${MAX_KEY_CREDITS})">
           <button class="act a-requeue">Primijeni</button>
         </form>
         ${toggle}
@@ -1113,8 +1114,8 @@ ${flashHtml}
       <input id="kname" name="name" placeholder="npr. Klijent X" required autofocus>
     </div>
     <div class="field">
-      <label for="kcred">Početni krediti</label>
-      <input id="kcred" name="credits" type="number" value="0" min="0" step="1">
+      <label for="kcred">Početni krediti (najviše ${MAX_KEY_CREDITS})</label>
+      <input id="kcred" name="credits" type="number" value="0" min="0" max="${MAX_KEY_CREDITS}" step="1">
     </div>
     <button type="submit"><span class="plus">+</span> Kreiraj ključ</button>
   </form>

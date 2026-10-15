@@ -2,19 +2,31 @@
 // Pokretanje: `npm test`.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { Hono } from 'hono';
 import { publicApi } from '../src/jobs/v1';
+import { MAX_QUEUED_PER_KEY, MAX_QUEUED_TOTAL } from '../src/db';
+import { onAppError } from '../src/errors';
+
+// Kao u index.ts: QueueFullError → 429 ide kroz globalni onError.
+const app = new Hono().route('/', publicApi);
+app.onError(onAppError);
 
 const KEY = { id: 'key1', name: 'prijatelj', credits: 10, enabled: 1 };
 
 // ── Lažni D1: api_keys lookup vraća KEY, SELECT joba po id-u vraća `job`, ostali SELECT-i null.
 interface Call { sql: string; binds: unknown[] }
-function fakeDb(job: Record<string, unknown> | null = null) {
+// `queued` = što vraća COUNT reda na čekanju; `insertChanges` = 0 glumi INSERT koji je odbio limit.
+function fakeDb(job: Record<string, unknown> | null = null, opts: { queued?: number; insertChanges?: number } = {}) {
   const calls: Call[] = [];
   const stmt = (sql: string, binds: unknown[] = []) => ({
     bind: (...b: unknown[]) => stmt(sql, b),
-    run: async () => { calls.push({ sql, binds }); return { meta: { changes: 1 } }; },
+    run: async () => {
+      calls.push({ sql, binds });
+      return { meta: { changes: sql.includes('INSERT INTO jobs') ? (opts.insertChanges ?? 1) : 1 } };
+    },
     first: async () => {
       calls.push({ sql, binds });
+      if (sql.startsWith('SELECT COUNT(*) FROM jobs')) return opts.queued ?? 0;
       if (sql.includes('FROM api_keys WHERE key_hash')) return KEY;
       if (sql.includes('FROM jobs WHERE id = ?')) return job;
       return null;
@@ -30,7 +42,7 @@ beforeEach(() => { globalThis.fetch = (async () => new Response('', { status: 40
 afterEach(() => { globalThis.fetch = realFetch; });
 
 async function post(db: D1Database, path: string, body: unknown) {
-  return publicApi.request(path, {
+  return app.request(path, {
     method: 'POST',
     headers: { authorization: 'Bearer pdk_test', 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -40,7 +52,8 @@ function insertBinds(calls: Call[]): Record<string, unknown> {
   const ins = calls.find((c) => c.sql.includes('INSERT INTO jobs'));
   assert.ok(ins, 'job nije upisan');
   const cols = ins.sql.match(/INSERT INTO jobs \(([^)]+)\)/)![1].split(',').map((s) => s.trim());
-  const vals = ins.sql.match(/VALUES \(([^)]+)\)/)![1].split(',').map((s) => s.trim());
+  // INSERT … SELECT <vrijednosti> WHERE <limit reda> (db.ts createJob).
+  const vals = ins.sql.match(/SELECT (.+?)\s+WHERE \(/s)![1].split(',').map((s) => s.trim());
   const row: Record<string, unknown> = {};
   let b = 0;
   cols.forEach((c, i) => { row[c] = vals[i] === '?' ? ins.binds[b++] : vals[i]; });
@@ -109,4 +122,30 @@ test('promjena modela članka na gotovom jobu → 409; Magisterium model prolazi
   assert.equal((await post(db, '/jobs/j1/llm-model', { value: 'vertex' })).status, 409);
   assert.equal((await post(db, '/jobs/j1/mag-model', { value: 'sonnet' })).status, 200);
   assert.ok(calls.some((c) => c.sql.includes('magisterium_model') && c.sql.startsWith('UPDATE')));
+});
+
+test('pun red → 429 PRIJE naplate: ni kredit ni job', async () => {
+  for (const queued of [MAX_QUEUED_TOTAL, MAX_QUEUED_PER_KEY]) {
+    const { db, calls } = fakeDb(null, { queued });
+    const r = await post(db, '/jobs', { url: '6e1MW97dv10', tier: 'priority' });
+    assert.equal(r.status, 429);
+    assert.ok(!calls.some((c) => c.sql.includes('INSERT INTO jobs') || c.sql.includes('credits = credits -')));
+  }
+});
+
+test('INSERT odbijen limitom (utrka) → 429 i krediti vraćeni', async () => {
+  const { db, calls } = fakeDb(null, { insertChanges: 0 });
+  const r = await post(db, '/jobs', { url: '6e1MW97dv10', tier: 'priority' });
+  assert.equal(r.status, 429);
+  const refund = calls.find((c) => c.sql.includes('MIN(?, MAX(0, credits + ?))'));
+  assert.ok(refund, 'krediti nisu vraćeni');
+  assert.equal(refund.binds[1], 5);
+});
+
+test('limit reda je u samom INSERT-u, i po ključu', async () => {
+  const { db, calls } = fakeDb();
+  await post(db, '/jobs', { url: '6e1MW97dv10' });
+  const ins = calls.find((c) => c.sql.includes('INSERT INTO jobs'))!;
+  assert.match(ins.sql, /WHERE \(SELECT COUNT\(\*\) FROM jobs WHERE state = 'queued'/);
+  assert.deepEqual(ins.binds.slice(-4), [MAX_QUEUED_TOTAL, 'key1', 'key1', MAX_QUEUED_PER_KEY]);
 });

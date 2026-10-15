@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import type { ApiKeyRow, Env } from '../types';
 import {
+  QueueFullError,
   addApiKeyCredits,
+  assertQueueCapacity,
   consumeApiKeyCredits,
   countByState,
   countJobs,
@@ -19,6 +21,7 @@ import {
   setJobMagisteriumModel,
   touchApiKey,
 } from '../db';
+import type { CreateJobInput } from '../db';
 import type { JobRow } from '../types';
 import {
   DEFAULT_TRANSCRIPTION,
@@ -67,6 +70,17 @@ function parseChoices(body: { article_model?: string; with_magisterium?: unknown
     return { error: `nepoznat magisterium_model: ${body.magisterium_model}` };
   }
   return { article, magisteriumModel, withMagisterium: body.with_magisterium !== false };
+}
+
+// Krediti su već skinuti; ako red popuni paralelni zahtjev između provjere i INSERT-a,
+// vrati ih i pusti QueueFullError dalje (onError → 429).
+async function createJobOrRefund(db: D1Database, keyId: string, cost: number, input: CreateJobInput): Promise<JobRow> {
+  try {
+    return await createJob(db, input);
+  } catch (e) {
+    if (e instanceof QueueFullError) await addApiKeyCredits(db, keyId, cost);
+    throw e;
+  }
 }
 
 // Enqueue videa. Dedup ne troši kredit; novi job rezervira 1 kredit (402 ako nema).
@@ -132,6 +146,8 @@ publicApi.post('/jobs', async (c) => {
     });
   }
 
+  // Pun red → 429 PRIJE naplate (QueueFullError ide na onError u index.ts).
+  await assertQueueCapacity(c.env.DB, key.id);
   // Naplata: atomski rezerviraj `cost` kredita (1 standard / 3 prioritet). Bez → 402.
   if (!(await consumeApiKeyCredits(c.env.DB, key.id, cost))) {
     return c.json({ error: 'Nema dovoljno kredita', credits_remaining: key.credits, required: cost }, 402);
@@ -139,7 +155,7 @@ publicApi.post('/jobs', async (c) => {
   const priceCents = Number(c.env.PRICE_CENTS ?? '0') || 0;
   // oEmbed radi samo za YouTube; za X bridge backfilla naslov/kanal iz info.json.
   const meta = ref.source === 'youtube' ? await fetchOEmbed(youtubeId) : null;
-  const job = await createJob(c.env.DB, {
+  const job = await createJobOrRefund(c.env.DB, key.id, cost, {
     youtubeId,
     youtubeUrl: ref.url,
     sourcePlatform: ref.source,
@@ -268,10 +284,11 @@ publicApi.post('/jobs/:id/reprocess', async (c) => {
   const active = await findActiveJobByYoutubeId(c.env.DB, job.youtube_id);
   if (active) return c.json({ error: 'Za ovaj video već postoji aktivna obrada.', job: active }, 409);
   const cost = priorityCost(transcription);
+  await assertQueueCapacity(c.env.DB, key.id);
   if (!(await consumeApiKeyCredits(c.env.DB, key.id, cost))) {
     return c.json({ error: 'Nema dovoljno kredita', credits_remaining: key.credits, required: cost }, 402);
   }
-  const created = await createJob(c.env.DB, {
+  const created = await createJobOrRefund(c.env.DB, key.id, cost, {
     youtubeId: job.youtube_id,
     youtubeUrl: job.youtube_url,
     sourcePlatform: job.source_platform,

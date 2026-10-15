@@ -9,6 +9,7 @@ import { transcriptionApi } from './transcription/api';
 import { magisteriumApi } from './magisterium/api';
 import { discoveredApi } from './discovered/api';
 import { usageApi } from './usage/api';
+import { onAppError } from './errors';
 import { autoEnqueueMagisterium, countByState, sweepStuckFetching, sweepStuckTranscribing } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -33,6 +34,9 @@ app.get('/', async (c) => {
     counts,
   });
 });
+
+// Pun red (db.ts MAX_QUEUED_*) s bilo kojeg API puta → 429 (errors.ts).
+app.onError(onAppError);
 
 app.route('/admin', admin);
 app.route('/dashboard', dashboard);

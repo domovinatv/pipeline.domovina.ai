@@ -102,3 +102,5 @@ ne napravi, admin radi samo preko Accessa.
 
 Vezani dokumenti: `docs/UI.md` (zajednički klijent admin + dashboard), README „Korisnički
 dashboard i `/api/v1`".
+`docs/2026-10-15-incident-admin-bypass.md` — zaobilazak prijave preko `/%61dmin/` (14.10.),
+zašto provjere moraju gledati `c.req.path`, kako čitati Worker logove napada.

@@ -38,6 +38,11 @@ app.get('/', async (c) => {
 // Pun red (db.ts MAX_QUEUED_*) s bilo kojeg API puta → 429 (errors.ts).
 app.onError(onAppError);
 
+// Hono je strict: admin.get('/') hvata samo /admin, a /admin/ (npr. login `next=/admin/`)
+// bi bio 404. Ide nakon mountAdminAuth, pa neprijavljeni i dalje idu na prijavu.
+// Query (npr. dashboard ?auth=) se prenosi.
+app.get('/admin/', (c) => c.redirect('/admin' + new URL(c.req.url).search, 301));
+app.get('/dashboard/', (c) => c.redirect('/dashboard' + new URL(c.req.url).search, 301));
 app.route('/admin', admin);
 app.route('/dashboard', dashboard);
 app.route('/api/jobs', jobsApi);

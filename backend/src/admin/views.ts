@@ -198,7 +198,9 @@ dialog.rpdlg h2 { margin-top: 0; }
    Roditelj .table-wrap ima overflow-x:auto, pa se u najgorem slučaju dobije horizontalni
    scroll umjesto kropanja. Naslov je jedini stupac koji smije rasti. */
 td[data-l="Akcije"], th.col-akcije { min-width: 23rem; }
-td[data-l="Naslov"] { min-width: 18rem; }
+/* overflow-wrap:anywhere: naslov bez razmaka (npr. testni „AAAA…" od 10k znakova iz
+   incidenta 14.10.) inače razvuče tablicu na ~50 000 px i Status/Rezultat nestanu desno. */
+td[data-l="Naslov"] { min-width: 18rem; white-space: normal; overflow-wrap: anywhere; }
 td[data-l="Video"], td[data-l="Dodano"], td[data-l="Status"] { white-space: nowrap; }
 td[data-l="Rezultat"] { white-space: normal; word-break: break-word; min-width: 8rem; }
 /* Gumbi i selecti u jednom retku, s urednim prelomom kad ponestane mjesta. */
@@ -232,8 +234,11 @@ button.act {
 }
 button.act:hover { background: var(--surface); border-color: var(--border-strong); }
 button.act.del { color: var(--danger); border-color: #f3c9c5; }
-/* Video čelija u tablici: thumbnail + ID */
+/* Video ćelija u tablici: thumbnail + izvorni link + domovina.ai link (videoCell, ui/client.ts) */
 .vidcell { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.vlinks { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.vlink { font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26ch; }
+.vlink.dim { color: var(--muted); }
 .rthumb { width: 88px; height: 50px; object-fit: cover; border-radius: .45rem; flex: none; background: var(--surface); border: 1px solid var(--border); }
 td .sub { font-size: .8rem; margin-top: .2rem; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow-sm); }
@@ -405,6 +410,8 @@ tr.deleted .act { text-decoration: none; opacity: 1; }
 footer { margin: 2rem 0 0; padding: 1.1rem 1.5rem 1.4rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .8rem; text-align: center; background: var(--card); }
 /* ── Mobile: tablice postaju kartice (data-l atribut na <td> = labela kolone) ── */
 @media (max-width: 760px) {
+  /* Mobile: linkovi videa smiju zauzeti punu širinu kartice */
+  .vlinks { flex: 1; } .vlink { max-width: 100%; }
   header { padding: .55rem 1rem; }
   header .badge { display: none; }
   main { padding: 1rem .9rem 2.25rem; }
@@ -707,7 +714,7 @@ ${renderJobChoiceFields()}
 <div class="table-wrap">
   <table>
     <thead><tr>
-      <th>Dodano</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th class="col-akcije">Akcije</th>
+      <th>Dodano</th><th>Video</th><th>Status</th><th>Naslov</th><th>Rezultat</th><th class="col-akcije">Akcije</th>
     </tr></thead>
     <tbody id="rows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
   </table>
@@ -784,21 +791,13 @@ async function refresh(){
     var data = await r.json();
     renderStats(data.counts);
     var rows = (data.jobs||[]).map(function(j){
-      // Izvor link: X → source_url (originalni post); YouTube → youtu.be. Sintetički
-      // youtube_id se za X NE koristi kao link (nije pravi YT video).
-      var isX = j.source_platform === 'x';
-      var srcHref = j.source_url ? esc(j.source_url) : (isX ? '' : 'https://youtu.be/'+esc(j.youtube_id));
-      var srcLabel = isX ? (j.source_url ? esc(j.source_url) : '𝕏 '+esc(j.youtube_id)) : esc(j.youtube_id);
-      var srcAnchor = srcHref
-        ? '<a class="mono" href="'+srcHref+'" target="_blank" rel="noopener" title="'+(isX?'Izvorni X post':'Izvorni YouTube video')+'">'+(isX?'𝕏 ':'')+srcLabel+'</a>'
-        : '<span class="mono dim">'+srcLabel+'</span>';
-      var vid = '<div class="vidcell">'+thumb(j)+srcAnchor+'</div>';
+      var vid = videoCell(j);
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var meta = '<div>'+esc(j.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+jobBadges(j)+'</div>';
       var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
               : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       // data-l = labela kolone za mobile karticu (CSS ::before)
-      return '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>' + detailRow(j);
+      return '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>' + detailRow(j);
     }).join('');
     document.getElementById('rows').innerHTML = rows || emptyRow((pState||pQ)?'Nema rezultata za filter.':'Nema jobova još. Dodaj prvi gore.');
     updatePager(data);

@@ -275,6 +275,20 @@ async function setModel(id, kind, value){
   refresh();
 }
 
+// Video ćelija: thumbnail + izvorni link + domovina.ai link (ili „čeka objavu").
+// Izvor: X (source_url = originalni X post) ili YouTube. youtube_id je za X sintetički →
+// NE gradi youtu.be link; koristi source_url iz baze.
+function videoCell(j){
+  var isX = j.source_platform === 'x';
+  var srcUrl = j.source_url ? esc(j.source_url) : (isX ? '' : 'https://youtu.be/'+esc(j.youtube_id));
+  var srcTitle = isX ? 'Izvorni X post' : 'Izvorni YouTube video';
+  var domUrl = j.detail_url ? esc(j.detail_url) : '';
+  var links = (srcUrl ? '<a class="mono vlink" href="'+srcUrl+'" target="_blank" rel="noopener" title="'+srcTitle+': '+srcUrl+'">'+(isX?'𝕏 '+srcUrl:srcUrl)+'</a>' : '')
+            + (domUrl ? '<a class="mono vlink" href="'+domUrl+'" target="_blank" rel="noopener" title="Objavljeno na domovina.ai">'+domUrl+'</a>'
+                      : '<span class="mono vlink dim">domovina.ai — čeka objavu</span>');
+  return '<div class="vidcell">'+thumb(j)+'<div class="vlinks">'+links+'</div></div>';
+}
+
 // ── Koraci pipelinea, tokeni i CDN datoteke (detail redak ispod retka)
 var expandedId = '', filesOpen = false, filesCache = {};
 function statusCell(j){

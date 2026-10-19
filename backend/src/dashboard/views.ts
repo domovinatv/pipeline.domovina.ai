@@ -52,11 +52,6 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
   .imp { display:inline-block; margin-left:.4rem; padding:.05rem .45rem; border-radius:999px;
          font-size:.68rem; font-weight:700; letter-spacing:.02em; text-transform:uppercase;
          background:#F3E8FF; color:#7C3AED; vertical-align:middle; }
-  .vlinks { display:flex; flex-direction:column; gap:.15rem; min-width:0; }
-  .vlink { font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:26ch; }
-  .vlink.dim { color:var(--muted); }
-  /* Mobile: linkovi smiju zauzeti punu širinu kartice */
-  @media (max-width: 760px) { .vlinks { flex: 1; } .vlink { max-width: 100%; } }
 </style>
 <h1>Moj pipeline <span class="dim" style="font-size:.9rem;font-weight:600;">— ${escapeHtml(key.name)}</span> <a class="tab" style="font-size:.8rem;vertical-align:middle;" href="/dashboard/logout" title="Zaboravi ključ u ovom pregledniku">odjava</a></h1>
 
@@ -117,7 +112,7 @@ export function renderDashboardPage(key: ApiKeyRow, rawKey: string): string {
 <div class="table-wrap">
   <table>
     <thead><tr>
-      <th>Dodano</th><th>Video</th><th>Naslov</th><th>Status</th><th>Rezultat</th><th class="col-akcije">Akcije</th>
+      <th>Dodano</th><th>Video</th><th>Status</th><th>Naslov</th><th>Rezultat</th><th class="col-akcije">Akcije</th>
     </tr></thead>
     <tbody id="rows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
   </table>
@@ -266,23 +261,14 @@ async function refresh(){
     lastJobs = {};
     var rows = (data.jobs||[]).map(function(j){
       lastJobs[j.id] = j;
-      // Izvor: X (source_url = originalni X post) ili YouTube. youtube_id je za X
-      // sintetički → NE gradi youtu.be link; koristi source_url iz baze.
-      var isX = j.source_platform === 'x';
-      var srcUrl = j.source_url ? esc(j.source_url) : (isX ? '' : 'https://youtu.be/'+esc(j.youtube_id));
-      var srcTitle = isX ? 'Izvorni X post' : 'Izvorni YouTube video';
-      var domUrl = j.detail_url ? esc(j.detail_url) : '';
-      var links = (srcUrl ? '<a class="mono vlink" href="'+srcUrl+'" target="_blank" rel="noopener" title="'+srcTitle+': '+srcUrl+'">'+(isX?'𝕏 '+srcUrl:srcUrl)+'</a>' : '')
-                + (domUrl ? '<a class="mono vlink" href="'+domUrl+'" target="_blank" rel="noopener" title="Objavljeno na domovina.ai">'+domUrl+'</a>'
-                          : '<span class="mono vlink dim">domovina.ai — čeka objavu</span>');
-      var vid = '<div class="vidcell">'+thumb(j)+'<div class="vlinks">'+links+'</div></div>';
+      var vid = videoCell(j);
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
       var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+jobBadges(j)+'</div>';
       var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
               : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       // data-l = labela kolone za mobile karticu (CSS ::before)
-      return '<tr><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>' + detailRow(j);
+      return '<tr><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>' + detailRow(j);
     }).join('');
     document.getElementById('rows').innerHTML = rows || emptyRow((pState||pQ)?'Nema rezultata za filter.':'Još nema obrada. Pošalji prvu gore.');
     updatePager(data);

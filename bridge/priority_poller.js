@@ -50,12 +50,27 @@ if (!INGEST_KEY) {
   process.exit(0); // soft: launchd tick ne smije "pasti"
 }
 
+// spawnSync run_pipeline.sh blokira event loop 10+ min; keep-alive socket koji je server u
+// međuvremenu zatvorio undici iskoristi za prvi sljedeći PATCH → "fetch failed", iznimka
+// izađe iz petlje i ostali claimani jobovi tick-a vise u 'fetching' do sweepa (19.10.).
+// Retry samo za idempotentne pozive; POST /claim bi ponovnim slanjem claimao još jobova.
 async function api(method, pathname, body) {
-  const res = await fetch(PIPELINE_QUEUE_BASE + pathname, {
-    method,
-    headers: { authorization: 'Bearer ' + INGEST_KEY, 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const tries = method === 'POST' ? 1 : 3;
+  let res;
+  for (let i = 1; ; i++) {
+    try {
+      res = await fetch(PIPELINE_QUEUE_BASE + pathname, {
+        method,
+        headers: { authorization: 'Bearer ' + INGEST_KEY, 'content-type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      break;
+    } catch (e) {
+      if (i >= tries) throw e;
+      console.error(`  ↻ ${method} ${pathname}: ${e.message} (${e.cause?.code || '?'}) — pokušaj ${i + 1}/${tries}`);
+      await new Promise((r) => setTimeout(r, 2000 * i));
+    }
+  }
   if (!res.ok) throw new Error(`${method} ${pathname} → ${res.status} ${await res.text()}`);
   return res.json();
 }

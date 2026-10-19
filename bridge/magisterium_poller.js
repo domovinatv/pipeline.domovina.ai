@@ -58,12 +58,26 @@ if (!INGEST_KEY) {
   process.exit(0); // soft: launchd tick ne smije "pasti"
 }
 
+// spawnSync runbooka blokira event loop ~14 min; zastarjeli keep-alive socket tada sruši
+// prvi sljedeći PATCH ("fetch failed"), a magisterium_jobs nema stuck sweep — zahtjev bi
+// trajno ostao u 'running'. Retry samo za idempotentne pozive (POST /claim bi claimao još).
 async function api(method, pathname, body) {
-  const res = await fetch(PIPELINE_QUEUE_BASE + pathname, {
-    method,
-    headers: { authorization: 'Bearer ' + INGEST_KEY, 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const tries = method === 'POST' ? 1 : 3;
+  let res;
+  for (let i = 1; ; i++) {
+    try {
+      res = await fetch(PIPELINE_QUEUE_BASE + pathname, {
+        method,
+        headers: { authorization: 'Bearer ' + INGEST_KEY, 'content-type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      break;
+    } catch (e) {
+      if (i >= tries) throw e;
+      console.error(`  ↻ ${method} ${pathname}: ${e.message} (${e.cause?.code || '?'}) — pokušaj ${i + 1}/${tries}`);
+      await new Promise((r) => setTimeout(r, 2000 * i));
+    }
+  }
   if (!res.ok) throw new Error(`${method} ${pathname} → ${res.status} ${await res.text()}`);
   return res.json();
 }

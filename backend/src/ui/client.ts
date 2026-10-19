@@ -516,7 +516,11 @@ function ytId(s){
 function wireAddForm(){
   var urlEl = document.getElementById('url'), titleEl = document.getElementById('title'), prev = document.getElementById('ytprev');
   if (urlEl && titleEl) {
-    var autoFilled = '', timer = null, lastId = '';
+    // userTyped: korisnik je sam pisao u naslov. Vrijednost koju je preglednik vratio
+    // (natrag s "već objavljeno", form restore) NIJE ručni unos — inače bi novi video
+    // zadržao naslov prethodnog i preview bi "ne radio".
+    var autoFilled = '', timer = null, lastId = '', userTyped = false;
+    titleEl.addEventListener('input', function(){ userTyped = !!titleEl.value; });
     var prefill = async function(){
       var id = ytId(urlEl.value);
       if (!id) { if (prev) prev.hidden = true; lastId = ''; return; }
@@ -535,11 +539,14 @@ function wireAddForm(){
           prev.hidden = false;
         }
         // Prefill naslova (ne gazi ručni unos)
-        if (j.title && (!titleEl.value || titleEl.value === autoFilled)) { titleEl.value = j.title; autoFilled = j.title; }
+        if (j.title && (!userTyped || !titleEl.value || titleEl.value === autoFilled)) { titleEl.value = j.title; autoFilled = j.title; userTyped = false; }
       } catch(e) { if (prev) prev.hidden = true; }
     };
     urlEl.addEventListener('input', function(){ clearTimeout(timer); timer = setTimeout(prefill, 400); });
     urlEl.addEventListener('change', prefill);
+    // Preglednik vrati URL u polje (natrag, bfcache) bez 'input' eventa → preview odmah.
+    if (urlEl.value) prefill();
+    window.addEventListener('pageshow', function(e){ if (e.persisted) { lastId = ''; prefill(); } });
   }
   // Hint ispod selecta — objasni što odabir znači (trošak/kvaliteta).
   [['article_model','article_model_hint','article'],['transcription','transcription_hint','transcription']].forEach(function(x){

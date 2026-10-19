@@ -65,3 +65,5 @@ Detaljna dokumentacija: `docs/MCP_BRIDGES.md`.
 
 Ponovna obrada / Speechmatics za prioritetne (v0.17.0) i ugovor prema fetch strani:
 `docs/2026-10-08-ponovna-obrada.md`.
+Playlista kroz prioritetni red, `fetch failed` nakon dugog `spawnSync`, `Vary: Origin` bundle i
+Magisterium lock (19.10.): `docs/2026-10-19-playlista-hodocasnik.md`.

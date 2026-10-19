@@ -73,6 +73,13 @@ U media queryju `@media (max-width: 760px)`:
   `addEventListener`. CSP pušta samo `i.ytimg.com` (img) i `www.youtube.com` (oEmbed) izvana.
 - Test `admin-jobs.test.ts` čita polja potvrdne stranice regexom; selecti u
   `renderReprocessFields()` nemaju `id` (dijalog dashboarda bi inače imao duple id-jeve).
+- **Prefill naslova (oEmbed, `wireAddForm`)** ne smije čuvati vrijednost koju je vratio
+  preglednik (natrag s „već objavljeno", form restore) — inače novi URL zadrži stari naslov i
+  izgleda kao da prefill „ne radi" (19.10., `?v=…&t=205s` na /admin; ID i oEmbed su bili
+  ispravni). Čuva se samo ono što je korisnik stvarno utipkao (`input` na naslovu).
+- **Hono je strict:** `admin.get('/')` hvata samo `/admin`, ne `/admin/`. Prijava vraća na
+  `next=/admin/`, pa je to bio 404 — `index.ts` sad 301-preusmjerava `/admin/` i
+  `/dashboard/`. Nova pod-aplikacija preko `app.route()` treba isto.
 - `APP_VERSION` (admin/views.ts) bumpaj prije SVAKOG deploya i podudari s
   `version` u package.json — prikazuje se u footeru za brzu identifikaciju builda.
 
@@ -94,3 +101,11 @@ View funkcije su čisti string-rendereri pa se daju bundlati i izvršiti u Nodeu
    jednak širini viewporta (na 390px ga je ranije gurao Fluid/Omeđeno toggle → skriven ≤760px).
 
 Time se cijeli UI (uključivo klijentski row-rendering) provjeri bez D1/.dev.vars.
+
+### S pravim CSP-om, bez prijave
+
+Za ponašanje koje ovisi o CSP-u/nonceu (fetch prema YouTubeu, inline skripte) statični HTML
+nije dovoljan. `tsx` skripta s `http.createServer` koja vrati `renderJobsPage()` uz istu
+nonce zamjenu i `content-security-policy` kao `admin/auth/mount.ts`, servirano na
+`localhost` i otvoreno u Braveu, ponaša se kao produkcijski /admin bez Access prijave.
+Tako je 19.10. isključeno da je CSP kriv za prefill naslova.

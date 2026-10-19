@@ -264,7 +264,7 @@ async function refresh(){
       var vid = videoCell(j);
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var imp = j.source==='import' ? ' <span class="imp" title="Objavljeno ranije, izvan tvojih kredita (admin ili drugi ključ) — uvezeno u tvoju listu, nije naplaćeno">uvezeno</span>' : '';
-      var meta = '<div>'+esc(j.title||'(bez naslova)')+imp+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+jobBadges(j)+'</div>';
+      var meta = '<div>'+titleText(j)+imp+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+jobBadges(j)+'</div>';
       var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
               : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       // data-l = labela kolone za mobile karticu (CSS ::before)

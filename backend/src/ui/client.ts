@@ -275,6 +275,13 @@ async function setModel(id, kind, value){
   refresh();
 }
 
+// Naslov u retku: najviše TITLE_MAX znakova + „…"; puni naslov ostaje u tooltipu.
+var TITLE_MAX = 400;
+function titleText(j){
+  var t = j.title || '(bez naslova)';
+  if (t.length <= TITLE_MAX) return '<span>'+esc(t)+'</span>';
+  return '<span title="'+esc(t)+'">'+esc(t.slice(0, TITLE_MAX))+'…</span>';
+}
 // Video ćelija: thumbnail + izvorni link + domovina.ai link (ili „čeka objavu").
 // Izvor: X (source_url = originalni X post) ili YouTube. youtube_id je za X sintetički →
 // NE gradi youtu.be link; koristi source_url iz baze.

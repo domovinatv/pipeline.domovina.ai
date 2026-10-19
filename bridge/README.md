@@ -9,6 +9,7 @@ Spaja cloud queue (`pipeline.domovina.ai`) s lokalnim pipelineom u
 | `priority_poller.js` | često (launchd, flock) | claim **prioritetnih** jobova → puni single-video run (Modal) → `transcribing`/`failed` |
 | `reconcile.js` | **nakon** punog runa | gotove (CDN article 200) → `done` + `detail_url`; diarizirane → `processing` |
 | `report_discovered.js` | **zadnje** u nightlyju | prijavi što je run NOVO povukao → dnevna podlista na `/admin/discovered` (ne queuea obradu) |
+| `enqueue_playlist.js` | ručno, iz terminala | cijela YouTube playlista u queue (`yt-dlp --flat-playlist` → `POST /api/jobs` s izborima kao admin forma); `--dry-run`, `--priority`, `--only`, ključ iz `FETCH_REPO/.env` |
 | `magisterium_poller.js` | često (launchd) | claim `magisterium_jobs` zahtjeva → `claude -p "@…/MAGISTERIUM_MCP_RUN.md <VID>"` headless → CDN verifikacija → `done`/`failed` |
 
 ## Env

@@ -10,7 +10,9 @@ import {
   listJobs,
   updateJob,
 } from '../db';
+import { DEFAULT_TRANSCRIPTION, parseArticleModel, parseMagisteriumModel, parseTranscription } from '../types';
 import { extractSourceRef, fetchOEmbed } from '../util';
+import { isPublishedOnDomovina } from '../pipeline';
 
 export const jobsApi = new Hono<{ Bindings: Env }>();
 
@@ -22,19 +24,33 @@ jobsApi.use('*', async (c, next) => {
   return mw(c as any, next);
 });
 
-// Enqueue (programatski). Admin koristi /admin/jobs formu umjesto ovoga.
+// Enqueue (programatski: bridge/enqueue_playlist.js i budući klijenti). Admin koristi
+// /admin/jobs formu. Izbori obrade su isti kao u formi; izostavljeni → isti defaulti
+// (standardno, default transkripcija, Claude Opus, Magisterium uključen).
 jobsApi.post('/', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     url?: string;
     youtube_id?: string;
     title?: string;
+    priority?: boolean;
+    transcription?: string;
+    with_magisterium?: boolean;
+    article_model?: string;
+    magisterium_model?: string;
+    // true → video koji je već objavljen na domovina.ai preskoči (ne queueaj duplikat).
+    skip_published?: boolean;
   };
   const ref = await extractSourceRef(body.url || body.youtube_id || '');
   if (!ref) return c.json({ error: 'Neispravan YouTube/X URL/ID' }, 400);
   const youtubeId = ref.id;
   const existing = await findActiveJobByYoutubeId(c.env.DB, youtubeId);
   if (existing) return c.json({ job: existing, deduped: true });
+  if (body.skip_published && (await isPublishedOnDomovina(c.env.CDN_BASE || 'https://cdn.domovina.ai', youtubeId))) {
+    return c.json({ skipped: 'published', youtube_id: youtubeId });
+  }
   const priceCents = Number(c.env.PRICE_CENTS ?? '0') || 0;
+  const priority = body.priority === true ? 1 : 0;
+  const article = parseArticleModel(body.article_model ?? '');
   // oEmbed radi samo za YouTube; za X bridge backfilla naslov/kanal iz info.json.
   const meta = ref.source === 'youtube' ? await fetchOEmbed(youtubeId) : null;
   const job = await createJob(c.env.DB, {
@@ -46,6 +62,13 @@ jobsApi.post('/', async (c) => {
     channel: meta?.channel ?? null,
     source: ref.source === 'x' ? 'x-api' : 'api',
     priceCents,
+    priority,
+    creditCost: priority ? 3 : 1,
+    withMagisterium: body.with_magisterium !== false,
+    llmBackend: article?.backend,
+    llmModel: article?.model,
+    magisteriumModel: parseMagisteriumModel(body.magisterium_model ?? ''),
+    transcription: parseTranscription(body.transcription ?? '', false) ?? DEFAULT_TRANSCRIPTION,
   });
   return c.json({ job }, 201);
 });

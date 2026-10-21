@@ -735,11 +735,17 @@ export async function enqueueMagisteriumJob(
 
 // Atomski claim: pokupi do `max` queued Magisterium zahtjeva → 'running' (bridge poller).
 // Bez D1 transakcija — conditional UPDATE (state='queued' guard), isto kao claimJobs.
-export async function claimMagisteriumJobs(db: D1Database, max: number): Promise<MagisteriumJobRow[]> {
+export async function claimMagisteriumJobs(
+  db: D1Database,
+  max: number,
+  lang?: 'hr' | 'en',
+): Promise<MagisteriumJobRow[]> {
   const n = Math.min(Math.max(max, 1), 10);
   const candidates = await db
-    .prepare(`SELECT ${MAG_COLS} FROM magisterium_jobs WHERE state='queued' ORDER BY created_at ASC LIMIT ?`)
-    .bind(n)
+    .prepare(
+      `SELECT ${MAG_COLS} FROM magisterium_jobs WHERE state='queued'${lang ? ' AND lang=?' : ''} ORDER BY created_at ASC LIMIT ?`,
+    )
+    .bind(...(lang ? [lang, n] : [n]))
     .all<MagisteriumJobRow>();
   const claimed: MagisteriumJobRow[] = [];
   const ts = nowSec();

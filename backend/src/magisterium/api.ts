@@ -53,8 +53,11 @@ magisteriumApi.get('/', async (c) => {
 
 // Bridge poller: pokupi do `max` queued zahtjeva → 'running', vrati ih.
 magisteriumApi.post('/claim', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { max?: number };
-  const jobs = await claimMagisteriumJobs(c.env.DB, body.max ?? 3);
+  // lang (opcijski): poller prvo claima HR, a EN tek kad HR reda nema — EN prijevod traje
+  // satima i ne smije držati HR zahtjeve iza sebe (21.10.2026.).
+  const body = (await c.req.json().catch(() => ({}))) as { max?: number; lang?: string };
+  const lang = body.lang === 'hr' || body.lang === 'en' ? body.lang : undefined;
+  const jobs = await claimMagisteriumJobs(c.env.DB, body.max ?? 3, lang);
   return c.json({ jobs });
 });
 

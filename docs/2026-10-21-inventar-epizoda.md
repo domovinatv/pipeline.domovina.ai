@@ -79,3 +79,21 @@ job `25f63195…`). UI umjesto ⚡ nudi „📚 u inventaru". Otvoreno: pada li 
 - 3: „samo što fali" — batch akcije po filteru (npr. svi kojima fali Magisterium HR u kanalu X),
   reprocess koraka bez punog joba (EN članak, words, epub).
 - 4: kandidati iz podcast.domovina.ai → „počni pratiti" kanal.
+
+## EN bez Claudea (v0.21.2, 21.10. popodne)
+
+Činjenice iz logova: EN kroz `claude -p` nikad nije uspio — yD9r0grKCkA (8 sekcija, 19.10.) i
+A-oDNz3nvdQ (10 sekcija, 21.10. 09:51→10:51) pali na `ETIMEDOUT`; agent je dugi `translate`
+prebacio u pozadinu (Bash limit 10+10 min), a sam sažetak je uz Vertex 429 trajao 15 min.
+nuNw4qWs0r4 EN ručno prekinut 11:15 da dva HR-a ne čekaju do podneva.
+
+Popravak:
+- `magisterium_poller.js`: EN = `translate_to_english.js --channel <iz inventara>` + objava
+  pod `with_pipeline_lock.sh` (channel index + `upload_to_r2.js`; force → `force_upload.js`),
+  rok `30 min + 5 min/sekciji` (max `MAG_EN_TIMEOUT_MAX_MS`, 4 h). Claim: HR prvi, EN tek kad
+  HR reda nema, jedan po ticku (`POST /api/magisterium/claim {lang}`).
+- `fetch.domovina.tv/translate_to_english.js`: `AbortSignal.timeout` (180 s) na Vertex poziv.
+- Zaostali parcijalni `summary.en.json` (A-oDNz3nvdQ, možda nuNw4qWs0r4) — sljedeći EN run ga
+  preskoči i nastavi; HR-only objava bi ga uploadala (runbook oprez).
+
+Otvoreno: E2E prvog EN-a novim putem (ponovno 🕊 EN za A-oDNz3nvdQ i nuNw4qWs0r4).

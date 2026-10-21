@@ -28,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.21.1';
+export const APP_VERSION = 'v0.21.2';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -1277,9 +1277,8 @@ var STEPS = ${JSON.stringify(EPISODE_STEPS)};
 ${SHARED_CLIENT_JS}
 var pChannel = '', pSince = '';
 var GLYPH = { ok:'✓', missing:'✗', partial:'◐', blocked:'⛔', na:'–' };
-// EN prijevod traje ~100 s po sekciji članka, a magisterium_poller prekida run nakon 60 min
-// (MAG_RUN_TIMEOUT_MS). Od ~25 sekcija runbook preporučuje EN ručno, ne kroz poller
-// (fetch.domovina.tv/docs/2026-08-29-magisterium-en-overlay-trosak.md).
+// EN prijevod traje ≥100 s po sekciji (29.08. mjerenje; 21.10. uz Vertex 429 i sporije). Poller ga
+// od v0.21.2 vrti bez Claudea s rokom po sekcijama — upozorenje je samo o trajanju.
 var EN_SEC_PER_SECTION = 100, EN_LONG_SECTIONS = 25;
 // Stanje koraka za prikaz. ⏳ ima prednost: Magisterium zahtjev queued/running ili aktivan job.
 function stepState(e, key){
@@ -1310,7 +1309,7 @@ function epActions(e){
     var n = e.article_sections, eta = n ? Math.round(n*EN_SEC_PER_SECTION/60) : null;
     var long = !!(n && n >= EN_LONG_SECTIONS);
     var tip = !hrOk ? 'EN tek kad je Magisterium HR gotov'
-      : 'Prijevod HR → EN (Gemini) — summary, članak i Magisterium'+(eta?' · '+n+' sekcija ≈ '+eta+' min':'')+(long?' · ⚠ dulje od limita pollera (60 min)':'');
+      : 'Prijevod HR → EN (Gemini) — summary, članak i Magisterium'+(eta?' · '+n+' sekcija ≈ '+eta+' min':'')+(long?' · ⚠ dug prijevod — ide iza HR reda':'');
     b.push('<button class="act a-requeue'+(long?' a-long':'')+'" data-id="'+esc(e.youtube_id)+'" data-act="magisterium-en"'+(long?' data-sections="'+n+'"':'')+(hrOk?'':' disabled')+' title="'+esc(tip)+'">🕊 EN'+(long?' ⚠':'')+'</button>');
   }
   b.push('<a class="tab" style="padding:.28rem .6rem;font-size:.78rem;" href="https://domovina.ai/v/'+esc(e.youtube_id)+'" target="_blank" rel="noopener">▶ domovina.ai</a>');
@@ -1356,7 +1355,7 @@ async function refresh(){
   } catch(e) {}
 }
 async function act(id, action, sections){
-  if (sections && !confirm('Članak ima '+sections+' sekcija — EN prijevod traje oko '+Math.round(sections*EN_SEC_PER_SECTION/60)+' min, a poller prekida run nakon 60 min.\\n\\nZahtjev će vjerojatno završiti kao failed (dio prijevoda ostane na disku). Preporuka: EN pokrenuti ručno u fetch.domovina.tv (MAGISTERIUM_MCP_RUN.md, korak 6).\\n\\nSvejedno poslati kroz poller?')) return false;
+  if (sections && !confirm('Članak ima '+sections+' sekcija — EN prijevod (Gemini, bez Claudea) može trajati i preko '+Math.round(sections*EN_SEC_PER_SECTION/60)+' min. Poller ga radi tek kad nema HR zahtjeva, s rokom po broju sekcija.\\n\\nPoslati?')) return false;
   var m = document.getElementById('eMagModel');
   try {
     var r = await fetch('/admin/episodes/'+encodeURIComponent(id)+'/'+action, {

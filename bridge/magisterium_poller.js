@@ -15,8 +15,14 @@
  * Po zahtjevu:
  *   1) CDN pre-check — ako artefakt VEĆ postoji (article.magisterium[.en].json 200) → done
  *      (idempotentno; ne troši tokene na ono što je gotovo — bitno za auto-enqueue granu).
- *   2) inače: claude -p "@docs/MAGISTERIUM_MCP_RUN.md <VID> [+EN]" (cwd = FETCH_REPO).
+ *   2) HR: claude -p "@docs/MAGISTERIUM_MCP_RUN.md <VID>" (cwd = FETCH_REPO).
+ *      EN: BEZ Claudea — translate_to_english.js (Vertex Gemini) + objava pod pipeline lockom.
  *   3) CDN verifikacija (GET, ne HEAD — CF cache-ira 404) → done | failed(+error).
+ *
+ * EN nije MCP nego strojni prijevod HR artefakata, a traje i preko sat vremena. Unutar
+ * `claude -p` nije stao ni u Bash limit (10 min → pozadina → ubijen) ni u 60 min pollera:
+ * yD9r0grKCkA 19.10. i A-oDNz3nvdQ 21.10. pali s ETIMEDOUT. Zato ga poller vrti sam, s
+ * rokom po broju sekcija, i claima EN tek kad nema HR zahtjeva (jedan po ticku).
  *
  * Env:
  *   PIPELINE_QUEUE_BASE        (default https://pipeline.domovina.ai)
@@ -29,9 +35,11 @@
  *   CLAUDE_PERMISSION_MODE     (default 'bypassPermissions' — headless runbook radi bash/MCP/R2 bez interakcije)
  *   MAG_MAX                    (default 2 — koliko zahtjeva po ticku; chat je rate-limitiran 15/min)
  *   MAG_RUNNER                 ('claude' default | 'manual' = samo ispiši komande, ne pokreći/claimaj)
- *   MAG_RUN_TIMEOUT_MS         (default 3_600_000 = 60 min po videu; run traje ~14 min prosjek)
+ *   MAG_RUN_TIMEOUT_MS         (default 3_600_000 = 60 min po HR videu; run traje ~14 min prosjek)
+ *   MAG_EN_TIMEOUT_MAX_MS      (default 4 h — gornja granica EN prijevoda; inače 30 min + 5 min/sekciji)
  */
 const { spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const PIPELINE_QUEUE_BASE = process.env.PIPELINE_QUEUE_BASE || 'https://pipeline.domovina.ai';
@@ -52,6 +60,9 @@ const ALLOWED_MODELS = ['opus', 'sonnet', 'haiku'];
 const MAG_MAX = parseInt(process.env.MAG_MAX || '2', 10);
 const MAG_RUNNER = process.env.MAG_RUNNER || 'claude';
 const RUN_TIMEOUT_MS = parseInt(process.env.MAG_RUN_TIMEOUT_MS || '3600000', 10);
+const EN_TIMEOUT_MAX_MS = parseInt(process.env.MAG_EN_TIMEOUT_MAX_MS || String(4 * 3600000), 10);
+// Objava čeka pipeline lock do 30 min (with_pipeline_lock.sh), pa sam upload.
+const PUBLISH_TIMEOUT_MS = 45 * 60000;
 
 if (!INGEST_KEY) {
   console.error('❌ PIPELINE_QUEUE_INGEST_KEY nije postavljen — preskačem Magisterium poller.');
@@ -112,6 +123,75 @@ async function artifactExists(youtubeId, lang, since = 0) {
   } catch {
     return false;
   }
+}
+
+// ─── EN PRIJEVOD (bez Claudea) ─────────────────────────────────────────────────
+// Kanal i broj sekcija iz inventara epizoda (/api/episodes, isti INGEST_KEY). Kanal je nužan:
+// video zna imati kopiju i u `_unlisted`, a `--video-id` bez `--channel` prevodi obje (2× vrijeme).
+async function episodeInfo(youtubeId) {
+  try {
+    const { episodes } = await api('GET', `/api/episodes?q=${encodeURIComponent(youtubeId)}&limit=5`);
+    return (episodes || []).find((e) => e.youtube_id === youtubeId) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Izmjereno 21.10.: sam sažetak 15 min uz Vertex 429 (umjesto ~3 min iz mjerenja 29.08.), pa
+// rok ima veliku rezervu. EN se ionako claima samo kad HR reda nema.
+function enTimeoutMs(sections) {
+  const min = 30 + 5 * (Number.isFinite(sections) && sections > 0 ? sections : 20);
+  return Math.min(Math.max(min * 60000, RUN_TIMEOUT_MS), EN_TIMEOUT_MAX_MS);
+}
+
+const EN_SUFFIXES = ['.canary.summary.en.json', '.article.en.json', '.article.magisterium.en.json'];
+
+// Force (EN postoji samo uz stariji članak): skloni stare .en.json da ih translate (koji
+// preskače postojeće) napravi iznova nad najnovijim člankom.
+function backupEnFiles(channel, youtubeId) {
+  const dir = path.join(FETCH_REPO, 'storage', 'output', channel);
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+  for (const f of fs.readdirSync(dir)) {
+    if (f.startsWith('.') || !f.includes(`_yt_${youtubeId}`) || !EN_SUFFIXES.some((x) => f.endsWith(x))) continue;
+    fs.renameSync(path.join(dir, f), path.join(dir, `${f}.bak-${stamp}`));
+    console.log(`  🗄 sklonio stari ${f.slice(-40)}`);
+  }
+}
+
+// Vrati null kad je prijevod napravljen i objavljen, inače razlog za `failed`.
+async function runEnglish(job) {
+  const id = job.youtube_id;
+  const ep = await episodeInfo(id);
+  // Kanal ide u shell naredbu objave → samo sigurni znakovi (slugovi direktorija ih ionako imaju).
+  const channel = ep && /^[A-Za-z0-9_-]+$/.test(ep.channel_dir || '') ? ep.channel_dir : null;
+  if (job.force && !channel) return 'ponovni EN traži kanal iz inventara epizoda (report_inventory.js), a nema ga';
+  if (job.force) backupEnFiles(channel, id);
+
+  const timeout = enTimeoutMs(ep && ep.article_sections);
+  const chArgs = channel ? ['--channel', channel] : [];
+  console.log(`  🌐 EN prijevod (Vertex Gemini, bez Claudea)${channel ? ' · ' + channel : ''} · ${ep && ep.article_sections ? ep.article_sections + ' sekcija · ' : ''}rok ${Math.round(timeout / 60000)} min`);
+  const tr = spawnSync('node', ['translate_to_english.js', '--input-dir', 'storage/output', ...chArgs, '--video-id', id], {
+    cwd: FETCH_REPO,
+    stdio: 'inherit',
+    timeout,
+  });
+  if (tr.error) return `translate_to_english.js: ${tr.error.code || tr.error.message} (rok ${Math.round(timeout / 60000)} min) — gotovi dijelovi ostaju na disku`;
+  if (tr.status !== 0) return `translate_to_english.js izašao s ${tr.status}`;
+
+  // Objava kao korak 7 runbooka. Force: data/* su immutable → force_upload.js (prepis + purge).
+  const upload = job.force
+    ? `node force_upload.js --video-id ${id} --channel ${channel} --targets summary-en,article-en,magisterium-en`
+    : `node upload_to_r2.js --input-dir storage/output --video-id ${id}`;
+  const script = `${channel ? `node generate_channel_index.js --channel ${channel} && ` : ''}${upload} && node upload_to_r2.js --meta-dir storage/meta`;
+  console.log('  📤 objava pod pipeline lockom (channel index + R2)…');
+  const pub = spawnSync(path.join(FETCH_REPO, 'automatic', 'with_pipeline_lock.sh'), ['bash', '-c', script], {
+    cwd: FETCH_REPO,
+    stdio: 'inherit',
+    timeout: PUBLISH_TIMEOUT_MS,
+  });
+  if (pub.status === 75) return 'pipeline lock nije dobiven u 30 min — prijevod je na disku, ponovi zahtjev (prijevod se preskače)';
+  if (pub.error || pub.status !== 0) return `objava EN izašla s ${pub.error ? pub.error.code : pub.status}`;
+  return null;
 }
 
 // ─── CLAUDE PROZOR KVOTE ──────────────────────────────────────────────────────
@@ -180,7 +260,9 @@ function runRunbook(youtubeId, lang, model, force) {
     if (!jobs.length) return console.log('📭 Nema queued Magisterium zahtjeva.');
     console.log(`📋 ${jobs.length} queued Magisterium zahtjeva (MAG_RUNNER=manual — pokreni ručno):`);
     for (const j of jobs) {
-      console.log(`  • ${j.youtube_id} [${j.lang}] → cd ${FETCH_REPO} && ${CLAUDE_BIN} --model ${modelFor(j)} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}${j.lang === 'en' ? ' +EN' : ''}"`);
+      console.log(j.lang === 'en'
+        ? `  • ${j.youtube_id} [en] → cd ${FETCH_REPO} && node translate_to_english.js --input-dir storage/output --video-id ${j.youtube_id}  (pa korak 7 runbooka)`
+        : `  • ${j.youtube_id} [hr] → cd ${FETCH_REPO} && ${CLAUDE_BIN} --model ${modelFor(j)} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}"`);
     }
     return;
   }
@@ -194,7 +276,10 @@ function runRunbook(youtubeId, lang, model, force) {
     return console.log(`⏸️  Claude prozor: ${claudeWindowReason()} — preskačem tick.`);
   }
 
-  const { jobs } = await api('POST', '/api/magisterium/claim', { max: MAG_MAX });
+  // HR prvi (MCP, ~15 min). EN (prijevod, i preko sat vremena) tek kad HR reda nema — jedan po
+  // ticku, da HR zahtjevi ne čekaju iza njega (21.10. dva HR-a stajala su iza EN-a).
+  let { jobs } = await api('POST', '/api/magisterium/claim', { max: MAG_MAX, lang: 'hr' });
+  if (!jobs.length) ({ jobs } = await api('POST', '/api/magisterium/claim', { max: 1, lang: 'en' }));
   if (!jobs.length) return console.log('📭 Nema Magisterium zahtjeva.');
   console.log(`🕊 Claimano ${jobs.length} Magisterium zahtjeva.`);
 
@@ -211,10 +296,20 @@ function runRunbook(youtubeId, lang, model, force) {
       continue;
     }
 
-    // 2) Pokreni runbook headless — modelom koji nosi sam zahtjev (admin izbor po videu).
-    const model = modelFor(job);
-    console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${model} -p …) — može potrajati ~14 min…`);
-    runRunbook(job.youtube_id, job.lang, model, job.force);
+    // 2) EN: prijevod + objava bez Claudea. HR: MCP runbook headless — modelom sa zahtjeva.
+    if (job.lang === 'en') {
+      const err = await runEnglish(job);
+      if (err) {
+        await api('PATCH', `/api/magisterium/${job.id}`, { state: 'failed', error: err });
+        console.log(`  ❌ ${err}`);
+        reportInventory(job.youtube_id);
+        continue;
+      }
+    } else {
+      const model = modelFor(job);
+      console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${model} -p …) — može potrajati ~14 min…`);
+      runRunbook(job.youtube_id, job.lang, model, job.force);
+    }
 
     // 3) Verificiraj po CDN-u (izvor istine, ne exit kod). Za force: samo NOVIJI od claima.
     if (await artifactExists(job.youtube_id, job.lang, since)) {

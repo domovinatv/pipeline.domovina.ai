@@ -13,7 +13,7 @@
  */
 
 import type { ApiKeyRow } from '../types';
-import { DEFAULT_ARTICLE_MODEL, DEFAULT_MAGISTERIUM_MODEL } from '../types';
+import { DEFAULT_ARTICLE_MODEL, DEFAULT_MAGISTERIUM_MODEL, EPISODE_STEPS } from '../types';
 import { escapeHtml } from '../util';
 import { MAX_KEY_CREDITS } from '../db';
 import {
@@ -28,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.20.0';
+export const APP_VERSION = 'v0.21.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -646,11 +646,11 @@ ${groupsHtml}
 }
 
 // Navigacijski tabovi između queue, otkrivenih videa i API-ključeva.
-function navTabs(active: 'queue' | 'discovered' | 'keys' | 'passkeys'): string {
+function navTabs(active: 'queue' | 'discovered' | 'episodes' | 'keys' | 'passkeys'): string {
   const tab = (href: string, id: string, label: string) =>
     `<a class="tab${active === id ? ' active' : ''}" href="${href}">${label}</a>`;
   // Odjava je POST (CSRF provjera Origin-a u auth/mount.ts), pa forma, ne link.
-  return `<div class="navrow"><nav class="tabs">${tab('/admin', 'queue', 'Queue')}${tab('/admin/discovered', 'discovered', '🌙 Otkriveni')}${tab('/admin/keys', 'keys', 'API ključevi')}${tab('/admin/passkeys', 'passkeys', '🔑 Passkeyi')}</nav>` +
+  return `<div class="navrow"><nav class="tabs">${tab('/admin', 'queue', 'Queue')}${tab('/admin/discovered', 'discovered', '🌙 Otkriveni')}${tab('/admin/episodes', 'episodes', '📚 Epizode')}${tab('/admin/keys', 'keys', 'API ključevi')}${tab('/admin/passkeys', 'passkeys', '🔑 Passkeyi')}</nav>` +
     `<form method="POST" action="/admin/logout" class="logout"><button class="tab" type="submit" title="Odjava iz admina">Odjava</button></form></div>`;
 }
 
@@ -1197,4 +1197,183 @@ ${navTabs('passkeys')}
 </div>
 <script src="/admin/static/passkey.js"></script>`;
   return layout('DOMOVINA Pipeline — passkeyi', body);
+}
+
+/**
+ * Inventar epizoda — SVE što je na disku Mac Minija (svi praćeni kanali, i EN) + stanje po
+ * koraku. Puni ga bridge/report_inventory.js; CDN se proba lijeno kad se redak otvori.
+ * Detail redak (koraci + 📁 datoteke) je isti klijent kao u queueu (READ='/admin/api/ep').
+ */
+export function renderEpisodesPage(): string {
+  const stepOpts = EPISODE_STEPS.map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join('');
+  const body = `
+${navTabs('episodes')}
+<h1>Epizode</h1>
+<div class="stats" id="stats"></div>
+
+<div class="addbox">
+  <div class="hint" style="margin-top:0;">
+    Sve epizode na disku (nightly <span class="mono">report_inventory.js</span>), s oznakom po koraku:
+    <strong>✓</strong> gotovo · <strong>✗</strong> fali · <strong>◐</strong> djelomično (npr. samo uz stariji članak) ·
+    <strong>⛔</strong> blokirano · <strong>⏳</strong> zahtjev je u tijeku. Klik na pločicu filtrira „fali korak".
+    CDN se provjerava tek kad otvoriš <strong>▸ koraci</strong>.
+  </div>
+  <div class="modelrow" style="margin-top:.9rem;">
+    <div class="field">
+      <label for="eMagModel">Model za Magisterium MCP (🕊 gumbi)</label>
+      <select id="eMagModel">${magisteriumModelOptions(DEFAULT_MAGISTERIUM_MODEL)}</select>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <label for="fChannel" class="dim">Kanal:</label>
+  <select id="fChannel"><option value="">svi</option></select>
+  <label for="fState" class="dim">Fali:</label>
+  <select id="fState"><option value="">—</option>${stepOpts}</select>
+  <label for="fSince" class="dim">od:</label>
+  <input id="fSince" type="date">
+  <input id="fQ" class="search" type="search" placeholder="traži ID / naslov…">
+  <label for="fLimit" class="dim">po stranici:</label>
+  <select id="fLimit"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
+  <span class="spacer"></span>
+  <span class="dim" id="updated"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Video</th><th>Naslov</th><th>Koraci</th><th class="col-akcije">Akcije</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="4" class="empty">Učitavam…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="pager">
+  <button id="pPrev">← Prethodna</button>
+  <button id="pNext">Sljedeća →</button>
+  <span class="info" id="pInfo"></span>
+</div>
+
+<style>
+.epsteps { display: flex; flex-wrap: wrap; gap: .25rem; }
+.epstep { font-size: .72rem; font-weight: 700; padding: .1rem .4rem; border-radius: .4rem; border: 1px solid var(--border); white-space: nowrap; }
+.epstep.ok      { background: #E0F1E5; color: #2E8540; border-color: #BFE3CC; }
+.epstep.missing { background: #FDECEC; color: #B91C1C; border-color: #F5C2C2; }
+.epstep.partial { background: #FDF1E0; color: #B45309; border-color: #F5D9A8; }
+.epstep.blocked { background: #ECEFF2; color: #5A6570; }
+.epstep.na      { background: #F6F7F9; color: #9AA3AD; }
+.epstep.busy    { background: #E7EEF8; color: #1D4ED8; border-color: #CDDDF6; }
+.epstep.unknown { background: var(--card); color: #9AA3AD; }
+.stat.clickable { cursor: pointer; }
+.stat.clickable.active { box-shadow: var(--ring); }
+</style>
+
+<script>
+var READ = '/admin/api/ep', H = {}, COLS = 4;
+var STEPS = ${JSON.stringify(EPISODE_STEPS)};
+${SHARED_CLIENT_JS}
+var pChannel = '', pSince = '';
+var GLYPH = { ok:'✓', missing:'✗', partial:'◐', blocked:'⛔', na:'–' };
+// Stanje koraka za prikaz. ⏳ ima prednost: Magisterium zahtjev queued/running ili aktivan job.
+function stepState(e, key){
+  if (key==='magisterium_hr' && (e.mag_hr_state==='queued'||e.mag_hr_state==='running')) return 'busy';
+  if (key==='magisterium_en' && (e.mag_en_state==='queued'||e.mag_en_state==='running')) return 'busy';
+  if (e.active_job_state && key!=='magisterium_hr' && key!=='magisterium_en' && key!=='cdn' && e[key]!=='ok') return 'busy';
+  if (key==='transcript') return e.transcript==='none' ? 'missing' : 'ok';
+  if (key==='cdn') return e.cdn || 'unknown';
+  return e[key] || 'missing';
+}
+function stepChips(e){
+  return '<div class="epsteps">'+STEPS.map(function(s){
+    var st = stepState(e, s.key);
+    var g = st==='busy' ? '⏳' : st==='unknown' ? '?' : (GLYPH[st]||'');
+    var extra = s.key==='transcript' && e.transcript!=='none' ? ' '+e.transcript : (s.key==='article' && e.article_model ? ' '+e.article_model : '');
+    var tip = s.label+': '+st+(s.key==='article' && e.article_date ? ' ('+e.article_date+')' : '');
+    return '<span class="epstep '+st+'" title="'+esc(tip)+'">'+g+' '+esc(s.label)+esc(extra)+'</span>';
+  }).join('')+'</div>';
+}
+function humanPub(d){ var s=String(d||''); return s.length===8 ? s.slice(6,8)+'.'+s.slice(4,6)+'.'+s.slice(0,4)+'.' : ''; }
+function epActions(e){
+  var b = [];
+  var hrBusy = e.mag_hr_state==='queued'||e.mag_hr_state==='running';
+  var enBusy = e.mag_en_state==='queued'||e.mag_en_state==='running';
+  if (e.article==='ok' && !hrBusy && e.magisterium_hr!=='ok') b.push('<button class="act a-requeue" data-id="'+esc(e.youtube_id)+'" data-act="magisterium-hr" title="Pokreni Magisterium HR (MCP poller)">🕊 HR</button>');
+  if (e.article==='ok' && !enBusy && e.magisterium_en!=='ok') {
+    var hrOk = e.magisterium_hr==='ok';
+    b.push('<button class="act a-requeue" data-id="'+esc(e.youtube_id)+'" data-act="magisterium-en"'+(hrOk?' title="Pokreni Magisterium EN overlay"':' disabled title="EN tek kad je Magisterium HR gotov"')+'>🕊 EN</button>');
+  }
+  b.push('<a class="tab" style="padding:.28rem .6rem;font-size:.78rem;" href="https://domovina.ai/v/'+esc(e.youtube_id)+'" target="_blank" rel="noopener">▶ domovina.ai</a>');
+  return '<div class="actwrap">'+b.join('')+'</div>';
+}
+function renderRow(e){
+  var j = { id: e.youtube_id, youtube_id: e.youtube_id };
+  var sub = [e.channel?esc(e.channel):'', e.duration_seconds?dur(e.duration_seconds):'', humanPub(e.upload_date)].filter(Boolean).join(' · ');
+  var meta = '<div>'+esc(e.title||'(bez naslova)')+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+
+    '<div class="sub"><span class="pill neutral mono" style="text-transform:none;letter-spacing:0;">'+esc(e.channel_dir)+'</span>'+(e.active_job_state?' <a class="pill '+esc(e.active_job_state)+'" href="/admin?q='+encodeURIComponent(e.youtube_id)+'">⚡ '+esc(e.active_job_state)+'</a>':'')+'</div>';
+  var open = expandedId===e.youtube_id;
+  var tog = '<div><button class="pillbtn" data-jobid="'+esc(e.youtube_id)+'" aria-expanded="'+(open?'true':'false')+'" title="Koraci na CDN-u">'+(open?'▾':'▸')+' koraci</button></div>';
+  var vid = '<div class="vidcell">'+thumb(j)+'<a class="mono" href="https://youtu.be/'+esc(e.youtube_id)+'" target="_blank" rel="noopener">'+esc(e.youtube_id)+'</a></div>';
+  return '<tr><td data-l="Video">'+vid+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Koraci">'+stepChips(e)+tog+'</td><td data-l="Akcije">'+epActions(e)+'</td></tr>'+detailRow(j);
+}
+function renderEpStats(stats){
+  var m = (stats&&stats.missing)||{};
+  var tiles = '<div class="stat s-done"><div class="label">epizoda</div><div class="value">'+((stats&&stats.total)||0)+'</div></div>';
+  tiles += STEPS.filter(function(s){ return m[s.key]; }).map(function(s){
+    return '<div class="stat s-failed clickable'+(pState===s.key?' active':'')+'" data-missing="'+s.key+'" title="Prikaži epizode kojima fali: '+esc(s.label)+'"><div class="label">fali '+esc(s.label)+'</div><div class="value">'+m[s.key]+'</div></div>';
+  }).join('');
+  document.getElementById('stats').innerHTML = tiles;
+}
+function epQs(){ return listQs()+(pChannel?'&channel='+encodeURIComponent(pChannel):'')+(pSince?'&since='+encodeURIComponent(pSince):''); }
+function fillChannels(list){
+  var sel = document.getElementById('fChannel');
+  if (sel.options.length > 1) return;
+  (list||[]).forEach(function(c){ var o=document.createElement('option'); o.value=c.channel_dir; o.textContent=c.channel_dir+' ('+c.n+')'; sel.appendChild(o); });
+  sel.value = pChannel;
+}
+async function refresh(){
+  try {
+    var r = await fetch('/admin/api/episodes'+epQs(), { headers: { 'accept':'application/json' } });
+    if (!r.ok) return;
+    var data = await r.json();
+    fillChannels(data.channels);
+    renderEpStats(data.stats);
+    var rows = (data.episodes||[]).map(renderRow).join('');
+    document.getElementById('rows').innerHTML = rows || emptyRow((pState||pQ||pChannel||pSince)?'Nema epizoda za filter.':'Inventar je prazan — pokreni bridge/report_inventory.js.');
+    data.jobs = data.episodes;
+    updatePager(data);
+    reloadExpanded();
+  } catch(e) {}
+}
+async function act(id, action){
+  var m = document.getElementById('eMagModel');
+  try {
+    var r = await fetch('/admin/episodes/'+encodeURIComponent(id)+'/'+action, {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ magisterium_model: m ? m.value : undefined })
+    });
+    if (!r.ok) { var j = await r.json().catch(function(){ return {}; }); notify('Nije uspjelo: '+(j.error||r.status)); }
+  } catch(e) { notify('Mrežna greška.'); }
+  refresh();
+}
+// Početni filter iz URL-a (?q=ID iz poruke otkrivenih videa, ?missing=…, ?channel=…).
+(function(){
+  var u = new URLSearchParams(location.search);
+  pQ = u.get('q')||''; pState = u.get('missing')||''; pChannel = u.get('channel')||'';
+  document.getElementById('fQ').value = pQ; document.getElementById('fState').value = pState;
+})();
+wireListControls();
+document.getElementById('fChannel').addEventListener('change', function(e){ pChannel=e.target.value; pOffset=0; refresh(); });
+document.getElementById('fSince').addEventListener('change', function(e){ pSince=e.target.value; pOffset=0; refresh(); });
+document.getElementById('stats').addEventListener('click', function(e){
+  var t = e.target.closest('.stat[data-missing]');
+  if (!t) return;
+  pState = pState===t.dataset.missing ? '' : t.dataset.missing;
+  document.getElementById('fState').value = pState; pOffset=0; refresh();
+});
+document.getElementById('rows').addEventListener('click', function(e){
+  if (handleRowClick(e)) return;
+  var b = e.target.closest('button.act');
+  if (b && !b.disabled) { b.classList.add('busy'); act(b.dataset.id, b.dataset.act); }
+});
+refresh();
+</script>`;
+  return layout('DOMOVINA Pipeline — epizode', body);
 }

@@ -335,3 +335,59 @@ export interface ApiKeyRow {
   created_at: number;
   last_used_at: number | null;
 }
+
+// ── Inventar epizoda (episodes) — sve što je na disku Mac Minija + stanje po koraku.
+// Puni ga bridge/report_inventory.js (migrations/0014). Nije queue: ništa se ne pokreće samo od sebe.
+export const EPISODE_STEP_VALUES = ['ok', 'missing', 'blocked', 'partial', 'na'] as const;
+export const EPISODE_TRANSCRIPTS = ['speechmatics', 'canary', 'none'] as const;
+
+// Koraci po kojima admin filtrira „fali korak X" (whitelist = imena stupaca, ide u SQL).
+// Redoslijed = run_pipeline.sh. `transcript` je poseban (vrijednost je backend, ne ok/missing).
+export const EPISODE_STEPS = [
+  { key: 'fetch', label: 'Preuzimanje' },
+  { key: 'transcript', label: 'Transkript' },
+  { key: 'diarized', label: 'Diarizacija' },
+  { key: 'summary', label: 'Sažetak' },
+  { key: 'article', label: 'Članak' },
+  { key: 'rag', label: 'RAG' },
+  { key: 'screenshots', label: 'Screenshotovi' },
+  { key: 'epub', label: 'EPUB' },
+  { key: 'words', label: 'Riječi' },
+  { key: 'magisterium_hr', label: 'Magisterium HR' },
+  { key: 'article_en', label: 'Članak EN' },
+  { key: 'magisterium_en', label: 'Magisterium EN' },
+  { key: 'cdn', label: 'CDN' },
+] as const;
+export type EpisodeStepKey = (typeof EPISODE_STEPS)[number]['key'];
+
+export interface EpisodeRow {
+  youtube_id: string;
+  channel_dir: string;
+  channel: string | null;
+  title: string | null;
+  upload_date: string | null; // YYYYMMDD
+  duration_seconds: number | null;
+  audio_only: number;
+  fetch: string;
+  transcript: string; // speechmatics | canary | none
+  diarized: string;
+  summary: string;
+  article: string;
+  article_model: string | null;
+  article_date: string | null;
+  rag: string;
+  screenshots: string;
+  epub: string;
+  words: string;
+  magisterium_hr: string;
+  magisterium_en: string;
+  article_en: string;
+  cdn: string | null; // NULL = Worker još nije probao CDN
+  cdn_checked_at: number | null;
+  first_seen_at: number;
+  updated_at: number;
+  // Popunjava listEpisodes (korelirani subupiti) — ⏳ u adminu.
+  active_job_state?: string | null; // aktivan job (queued/fetching/transcribing/processing)
+  mag_hr_state?: string | null;
+  mag_en_state?: string | null;
+}

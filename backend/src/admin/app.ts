@@ -4,19 +4,24 @@ import {
   addApiKeyCredits,
   countByState,
   countDiscoveredByState,
+  countEpisodes,
   countJobs,
   createApiKey,
   createJob,
   deleteApiKey,
   deleteJob,
   enqueueMagisteriumJob,
+  episodeMissingCounts,
   findActiveJobByYoutubeId,
   getDiscovered,
+  getEpisode,
   getJob,
   getTokenUsage,
   listApiKeys,
   listDiscovered,
   listDiscoveredBatches,
+  listEpisodeChannels,
+  listEpisodes,
   listJobs,
   markDiscoveredPromoted,
   prioritizeJob,
@@ -25,6 +30,7 @@ import {
   setDiscoveredState,
   setJobLlmModel,
   setJobMagisterium,
+  setEpisodeCdn,
   setJobMagisteriumModel,
   softDeleteJob,
   updateJob,
@@ -38,6 +44,7 @@ import {
   layout,
   renderAlreadyPublishedPage,
   renderDiscoveredPage,
+  renderEpisodesPage,
   renderJobFilesPage,
   renderJobsPage,
   renderKeysPage,
@@ -297,6 +304,16 @@ async function promoteDiscovered(
     return { ok: true, jobId: existing.id, deduped: true };
   }
 
+  // Video je već obrađen na disku praćenog kanala → puni single-video job bi ga ponovno
+  // skidao u `_unlisted` i pao („nema info.json u _unlisted", nuNw4qWs0r4 21.10.). Ne stvaraj
+  // job; ono što fali (Magisterium HR/EN…) dodaje se iz inventara epizoda.
+  if (row.stage !== 'fetched') {
+    return {
+      ok: false,
+      reason: `video je već na disku u kanalu ${row.channel_dir ?? '?'} (faza: ${row.stage}) — puni job bi pao; korake koji fale dodaj u /admin/episodes?q=${row.youtube_id}`,
+    };
+  }
+
   const article = parseArticleModel(models.articleModel);
   let job: JobRow;
   try {
@@ -476,4 +493,88 @@ admin.get('/api/jobs/:id/pipeline', async (c) => {
     getTokenUsage(c.env.DB, job.youtube_id),
   ]);
   return c.json({ ...report, tokens });
+});
+
+// ───────────────────────── Inventar epizoda (/admin/episodes) ─────────────────────────
+// Sve što je na disku Mac Minija (bridge/report_inventory.js) + stanje po koraku. Jedina akcija
+// u ovoj fazi je 🕊 Magisterium HR/EN preko postojećeg magisterium_jobs queuea.
+
+admin.get('/episodes', (c) => c.html(renderEpisodesPage()));
+
+admin.get('/api/episodes', async (c) => {
+  const channel = c.req.query('channel') || undefined;
+  const opts = {
+    channel,
+    // Dijeljeni klijent (wireListControls) šalje filter kao `state`; ovdje znači „fali korak".
+    missing: c.req.query('missing') || c.req.query('state') || undefined,
+    q: c.req.query('q') || undefined,
+    since: c.req.query('since') || undefined,
+    limit: Number(c.req.query('limit') ?? 50),
+    offset: Number(c.req.query('offset') ?? 0),
+  };
+  const [episodes, total, stats, channels] = await Promise.all([
+    listEpisodes(c.env.DB, opts),
+    countEpisodes(c.env.DB, opts),
+    episodeMissingCounts(c.env.DB, channel),
+    listEpisodeChannels(c.env.DB),
+  ]);
+  return c.json({ episodes, total, limit: opts.limit, offset: opts.offset, stats, channels });
+});
+
+// Koraci + 📁 datoteke za redak inventara. Putanja oponaša /admin/api/jobs/:id/… da isti
+// klijent iz ui/client.ts (detailRow/loadSteps/loadFiles, READ='/admin/api/ep') radi i ovdje —
+// samo je „:id" youtube_id, jer epizoda nightlyja nema job.
+admin.get('/api/ep/jobs/:id/pipeline', async (c) => {
+  const ep = await getEpisode(c.env.DB, c.req.param('id'));
+  if (!ep) return c.json({ error: 'not found' }, 404);
+  const cdnBase = c.env.CDN_BASE || 'https://cdn.domovina.ai';
+  const [report, tokens] = await Promise.all([
+    buildPipelineReport(
+      cdnBase,
+      { youtube_id: ep.youtube_id, state: 'done', detail_url: null, with_magisterium: ep.magisterium_hr === 'ok' ? 1 : 0 },
+      c.env.SITE_BASE || 'https://domovina.ai',
+    ),
+    getTokenUsage(c.env.DB, ep.youtube_id),
+  ]);
+  // Lijena CDN isporuka: obavezni koraci s artefaktom na CDN-u → ok, ništa → missing, dio → partial.
+  // Zapisuje se u redak, pa filter „fali CDN" pokriva sve što je itko otvorio.
+  const required = report.steps.filter((s) => !s.optional && s.key !== 'live');
+  const done = required.filter((s) => s.state === 'done').length;
+  const cdn = done === required.length ? 'ok' : done === 0 ? 'missing' : 'partial';
+  if (cdn !== ep.cdn) await setEpisodeCdn(c.env.DB, ep.youtube_id, cdn);
+  return c.json({ ...report, tokens, cdn });
+});
+
+admin.get('/api/ep/jobs/:id/files', async (c) => {
+  if (!c.env.CDN_BUCKET) return c.json({ error: 'CDN_BUCKET R2 binding nije konfiguriran' }, 503);
+  const ep = await getEpisode(c.env.DB, c.req.param('id'));
+  if (!ep) return c.json({ error: 'not found' }, 404);
+  const cdnBase = (c.env.CDN_BASE || 'https://cdn.domovina.ai').replace(/\/$/, '');
+  return c.json({ cdn_base: cdnBase, groups: await listCdnFiles(c.env.CDN_BUCKET, ep.youtube_id) });
+});
+
+// 🕊 HR / 🕊 EN. EN tek kad je HR gotov (overlay se gradi nad HR Magisteriumom); HR tek kad
+// postoji članak. Model iz selecta u zaglavlju stranice; NULL → poller uzme svoj default.
+admin.post('/episodes/:id/:action', async (c) => {
+  const action = c.req.param('action');
+  if (action !== 'magisterium-hr' && action !== 'magisterium-en') {
+    return c.json({ error: `nepoznata akcija: ${action}` }, 400);
+  }
+  const ep = await getEpisode(c.env.DB, c.req.param('id'));
+  if (!ep) return c.json({ error: 'not found' }, 404);
+  const lang = action === 'magisterium-en' ? 'en' : 'hr';
+  if (ep.article !== 'ok') return c.json({ error: 'epizoda nema gotov članak' }, 409);
+  if (lang === 'en' && ep.magisterium_hr !== 'ok') {
+    return c.json({ error: 'Magisterium EN tek nakon HR — HR još nije gotov' }, 409);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as { magisterium_model?: string };
+  const { row, deduped } = await enqueueMagisteriumJob(c.env.DB, {
+    youtubeId: ep.youtube_id,
+    lang,
+    source: 'admin',
+    model: parseMagisteriumModel(body.magisterium_model),
+    // Postoji samo uz stariji članak → regeneriraj nad najnovijim.
+    force: (lang === 'hr' ? ep.magisterium_hr : ep.magisterium_en) === 'partial',
+  });
+  return c.json({ ok: true, magisterium: row, deduped });
 });

@@ -2,12 +2,13 @@ import type {
   ApiKeyRow,
   DiscoveredBatch,
   DiscoveredRow,
+  EpisodeRow,
   JobRow,
   JobState,
   MagisteriumJobRow,
   TokenUsageRow,
 } from './types';
-import { DEFAULT_TRANSCRIPTION } from './types';
+import { DEFAULT_TRANSCRIPTION, EPISODE_STEPS } from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
@@ -1157,4 +1158,159 @@ export async function setDiscoveredState(
     .bind(state, nowSec(), id)
     .run();
   return (res.meta.changes ?? 0) === 1;
+}
+
+// ───────────────────────── Inventar epizoda (episodes) ─────────────────────────
+const EP_COLS =
+  'youtube_id, channel_dir, channel, title, upload_date, duration_seconds, audio_only, fetch, transcript, diarized, summary, article, article_model, article_date, rag, screenshots, epub, words, magisterium_hr, magisterium_en, article_en, cdn, cdn_checked_at, first_seen_at, updated_at';
+
+// Stupci koje piše disk-scan (bridge/report_inventory.js). Sve osim cdn* i vremena.
+const EP_DISK_COLS = [
+  'channel_dir', 'channel', 'title', 'upload_date', 'duration_seconds', 'audio_only',
+  'fetch', 'transcript', 'diarized', 'summary', 'article', 'article_model', 'article_date',
+  'rag', 'screenshots', 'epub', 'words', 'magisterium_hr', 'magisterium_en', 'article_en',
+] as const;
+
+export type EpisodeInput = Pick<EpisodeRow, 'youtube_id'> & {
+  [K in (typeof EP_DISK_COLS)[number]]: string | number | null;
+};
+
+// Potpis stanja s diska. Upsert piše redak samo kad se potpis promijeni — nightly šalje cijeli
+// katalog (~3.5k epizoda), a nepromijenjen redak ne smije trošiti D1 pisanje ni pomicati updated_at.
+export function episodeSig(e: EpisodeInput): string {
+  return EP_DISK_COLS.map((k) => String(e[k] ?? '')).join('|');
+}
+
+// Batch upsert. `WHERE episodes.sig IS NOT excluded.sig` → nepromijenjen redak nije napisan
+// (meta.changes = 0), pa zbroj changes = broj stvarno novih/promijenjenih epizoda. Promjena
+// stanja na disku poništi zadnju CDN probu (cdn=NULL): artefakt je možda novi, proba je zastarjela.
+export async function upsertEpisodes(db: D1Database, items: EpisodeInput[]): Promise<number> {
+  if (!items.length) return 0;
+  const ts = nowSec();
+  const cols = ['youtube_id', ...EP_DISK_COLS, 'sig', 'first_seen_at', 'updated_at'];
+  const sql =
+    `INSERT INTO episodes (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})
+     ON CONFLICT(youtube_id) DO UPDATE SET
+       ${EP_DISK_COLS.map((c) => `${c} = excluded.${c}`).join(', ')},
+       sig = excluded.sig, updated_at = excluded.updated_at, cdn = NULL, cdn_checked_at = NULL
+     WHERE episodes.sig IS NOT excluded.sig`;
+  const stmts = items.map((e) =>
+    db.prepare(sql).bind(e.youtube_id, ...EP_DISK_COLS.map((c) => e[c] ?? null), episodeSig(e), ts, ts),
+  );
+  let changed = 0;
+  // D1 batch je jedan round-trip; 100 izjava po batchu drži ga daleko od limita.
+  for (let i = 0; i < stmts.length; i += 100) {
+    const res = await db.batch(stmts.slice(i, i + 100));
+    for (const r of res) changed += r.meta?.changes ?? 0;
+  }
+  return changed;
+}
+
+export async function getEpisode(db: D1Database, youtubeId: string): Promise<EpisodeRow | null> {
+  const row = await db
+    .prepare(`SELECT ${EP_COLS} FROM episodes WHERE youtube_id = ?`)
+    .bind(youtubeId)
+    .first<EpisodeRow>();
+  return row ?? null;
+}
+
+export async function setEpisodeCdn(db: D1Database, youtubeId: string, cdn: string): Promise<void> {
+  await db
+    .prepare(`UPDATE episodes SET cdn = ?, cdn_checked_at = ? WHERE youtube_id = ?`)
+    .bind(cdn, nowSec(), youtubeId)
+    .run();
+}
+
+export interface ListEpisodesOpts {
+  channel?: string; // channel_dir
+  missing?: string; // ključ iz EPISODE_STEPS — „fali korak X"
+  q?: string; // youtube_id / naslov
+  since?: string; // YYYY-MM-DD — upload_date >= since
+  limit?: number;
+  offset?: number;
+}
+
+// „Fali" = nije ok (i nije 'na'). Transkript nosi backend umjesto ok, pa fali = 'none';
+// CDN je NULL dok ga Worker ne proba — neprobano se ne broji kao rupa.
+function missingCond(key: string): string | null {
+  if (!EPISODE_STEPS.some((s) => s.key === key)) return null; // whitelist → ime stupca je sigurno
+  if (key === 'transcript') return `e.transcript = 'none'`;
+  if (key === 'cdn') return `e.cdn IN ('missing','partial')`;
+  return `e.${key} NOT IN ('ok','na')`;
+}
+
+function buildEpisodeFilter(opts: ListEpisodesOpts): { where: string; binds: unknown[] } {
+  const cond: string[] = [];
+  const binds: unknown[] = [];
+  if (opts.channel) {
+    cond.push('e.channel_dir = ?');
+    binds.push(opts.channel);
+  }
+  if (opts.missing) {
+    const m = missingCond(opts.missing);
+    if (m) cond.push(m);
+  }
+  if (opts.since && /^\d{4}-\d{2}-\d{2}$/.test(opts.since)) {
+    cond.push('e.upload_date >= ?');
+    binds.push(opts.since.replace(/-/g, ''));
+  }
+  if (opts.q && opts.q.trim()) {
+    const like = '%' + opts.q.trim() + '%';
+    cond.push('(e.youtube_id LIKE ? OR e.title LIKE ?)');
+    binds.push(like, like);
+  }
+  return { where: cond.length ? 'WHERE ' + cond.join(' AND ') : '', binds };
+}
+
+export async function listEpisodes(db: D1Database, opts: ListEpisodesOpts = {}): Promise<EpisodeRow[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const offset = Math.max(opts.offset ?? 0, 0);
+  const { where, binds } = buildEpisodeFilter(opts);
+  const cols = EP_COLS.split(',').map((c) => 'e.' + c.trim()).join(', ');
+  // Korelirani subupiti samo za stranicu (≤200 redaka) → ⏳ kad je nešto već u tijeku.
+  const res = await db
+    .prepare(
+      `SELECT ${cols},
+              (SELECT j.state FROM jobs j WHERE j.youtube_id = e.youtube_id AND j.deleted_at IS NULL
+                 AND j.state IN ('queued','fetching','transcribing','processing') ORDER BY j.created_at DESC LIMIT 1) AS active_job_state,
+              (SELECT m.state FROM magisterium_jobs m WHERE m.youtube_id = e.youtube_id AND m.lang = 'hr' ORDER BY m.created_at DESC LIMIT 1) AS mag_hr_state,
+              (SELECT m.state FROM magisterium_jobs m WHERE m.youtube_id = e.youtube_id AND m.lang = 'en' ORDER BY m.created_at DESC LIMIT 1) AS mag_en_state
+         FROM episodes e ${where}
+        ORDER BY e.upload_date DESC, e.youtube_id
+        LIMIT ? OFFSET ?`,
+    )
+    .bind(...binds, limit, offset)
+    .all<EpisodeRow>();
+  return res.results ?? [];
+}
+
+export async function countEpisodes(db: D1Database, opts: ListEpisodesOpts = {}): Promise<number> {
+  const { where, binds } = buildEpisodeFilter(opts);
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM episodes e ${where}`)
+    .bind(...binds)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+// Pločice: ukupno + koliko epizoda fali svaki korak (unutar odabranog kanala, ako je zadan).
+export async function episodeMissingCounts(
+  db: D1Database,
+  channel?: string,
+): Promise<{ total: number; missing: Record<string, number> }> {
+  const sums = EPISODE_STEPS.map((s) => `SUM(CASE WHEN ${missingCond(s.key)} THEN 1 ELSE 0 END) AS "${s.key}"`);
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS total, ${sums.join(', ')} FROM episodes e${channel ? ' WHERE e.channel_dir = ?' : ''}`)
+    .bind(...(channel ? [channel] : []))
+    .first<Record<string, number | null>>();
+  const missing: Record<string, number> = {};
+  for (const s of EPISODE_STEPS) missing[s.key] = Number(row?.[s.key] ?? 0);
+  return { total: Number(row?.total ?? 0), missing };
+}
+
+export async function listEpisodeChannels(db: D1Database): Promise<{ channel_dir: string; n: number }[]> {
+  const res = await db
+    .prepare(`SELECT channel_dir, COUNT(*) AS n FROM episodes GROUP BY channel_dir ORDER BY channel_dir`)
+    .all<{ channel_dir: string; n: number }>();
+  return res.results ?? [];
 }

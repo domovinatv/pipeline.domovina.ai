@@ -67,3 +67,5 @@ Ponovna obrada / Speechmatics za prioritetne (v0.17.0) i ugovor prema fetch stra
 `docs/2026-10-08-ponovna-obrada.md`.
 Playlista kroz prioritetni red, `fetch failed` nakon dugog `spawnSync`, `Vary: Origin` bundle i
 Magisterium lock (19.10.): `docs/2026-10-19-playlista-hodocasnik.md`.
+Inventar svih epizoda na disku + stanje po koraku (`/admin/episodes`, `bridge/report_inventory.js`,
+tablica `episodes`, v0.21.0): `docs/2026-10-21-inventar-epizoda.md`.

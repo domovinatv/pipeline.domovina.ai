@@ -932,7 +932,10 @@ function rowActions(r){
   }
   var b = [];
   if (r.state === 'new') {
-    if (r.promotable) {
+    if (r.stage && r.stage !== 'fetched') {
+      // Već obrađen u kanalu → puni job bi pao (promoteDiscovered); što fali dodaje se iz inventara.
+      b.push('<a class="tab" style="padding:.28rem .6rem;font-size:.78rem;" href="/admin/episodes?q='+encodeURIComponent(r.youtube_id)+'" title="Video je već u kanalu — dodaj samo korake koji fale">📚 u inventaru</a>');
+    } else if (r.promotable) {
       b.push('<button class="act a-promote" data-id="'+esc(r.id)+'" data-act="promote" title="Stvori prioritetni job — puna obrada odmah (Modal)">⚡ Prioritet</button>');
     } else {
       b.push('<span class="dim" title="Beamly audio-only (sintetički ID) — nema YouTube izvor za ponovni fetch">bez YT izvora</span>');
@@ -965,7 +968,7 @@ function renderRow(r){
     '<td data-l="Akcije">'+rowActions(r)+'</td></tr>';
 }
 function renderBatch(date, rows, summary){
-  var nNew = rows.filter(function(r){ return r.state==='new'; }).length;
+  var nNew = rows.filter(function(r){ return r.state==='new' && (!r.stage || r.stage==='fetched'); }).length;
   var promoteAll = nNew > 0
     ? '<button class="act a-promote-all" data-date="'+esc(date)+'" data-n="'+nNew+'" title="Pošalji sve nove iz ove podliste na prioritetnu obradu">⚡ Pošalji sve ('+nNew+')</button>'
     : '';

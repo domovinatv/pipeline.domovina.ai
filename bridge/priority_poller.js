@@ -112,6 +112,16 @@ function readMeta(youtubeId) {
 }
 
 // Lokalni datum (Mac Mini), ne UTC — "dan" kako ga vidi vlasnik.
+// Osvježi redak u inventaru epizoda (/admin/episodes) za jedan video — bez čekanja nightlyja.
+// Best-effort: report_inventory.js sam soft-exita, a greška ovdje ne smije srušiti tick.
+function reportInventory(youtubeId) {
+  try {
+    spawnSync('node', [path.join(__dirname, 'report_inventory.js'), '--video-id', youtubeId], { stdio: 'inherit' });
+  } catch (e) {
+    console.log(`  ⚠️ inventar nije osvježen: ${e.message}`);
+  }
+}
+
 function today() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -223,6 +233,7 @@ function writeBudget(b) {
         console.log('  ❌ --replace nije uspio → failed');
       }
     }
+    reportInventory(job.youtube_id);
   }
 })().catch((e) => {
   console.error('⚠️ priority_poller greška:', e.message);

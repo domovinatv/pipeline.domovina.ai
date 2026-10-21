@@ -531,7 +531,8 @@ admin.get('/api/ep/jobs/:id/pipeline', async (c) => {
   const [report, tokens] = await Promise.all([
     buildPipelineReport(
       cdnBase,
-      { youtube_id: ep.youtube_id, state: 'done', detail_url: null, with_magisterium: ep.magisterium_hr === 'ok' ? 1 : 0 },
+      // with_magisterium=1: odsutan Magisterium je „čeka" (dodaje se 🕊 gumbom), ne „preskočeno".
+      { youtube_id: ep.youtube_id, state: 'done', detail_url: null, with_magisterium: 1 },
       c.env.SITE_BASE || 'https://domovina.ai',
     ),
     getTokenUsage(c.env.DB, ep.youtube_id),

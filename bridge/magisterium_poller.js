@@ -122,6 +122,16 @@ async function artifactExists(youtubeId, lang, since = 0) {
 const CLAUDE_WINDOW_BIN = process.env.CLAUDE_WINDOW_BIN || 'claude-window';
 let claudeWindowLastReason = '';
 
+// Osvježi redak u inventaru epizoda (/admin/episodes) za jedan video — bez čekanja nightlyja.
+// Best-effort: report_inventory.js sam soft-exita, a greška ovdje ne smije srušiti tick.
+function reportInventory(youtubeId) {
+  try {
+    spawnSync('node', [path.join(__dirname, 'report_inventory.js'), '--video-id', youtubeId], { stdio: 'inherit' });
+  } catch (e) {
+    console.log(`  ⚠️ inventar nije osvježen: ${e.message}`);
+  }
+}
+
 function claudeWindowClosed() {
   if (process.env.CLAUDE_WINDOW_GUARD !== '1') return false;
   const r = spawnSync(CLAUDE_WINDOW_BIN, ['check'], { encoding: 'utf-8' });
@@ -217,6 +227,7 @@ function runRunbook(youtubeId, lang, model, force) {
       });
       console.log(`  ❌ nema artefakta nakon runa → failed`);
     }
+    reportInventory(job.youtube_id);
   }
 })().catch((e) => {
   console.error('⚠️ magisterium_poller greška:', e.message);

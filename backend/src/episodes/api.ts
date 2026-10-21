@@ -46,6 +46,7 @@ export function normalizeEpisode(it: Record<string, unknown>): EpisodeInput | nu
         : 'none',
     article_model: str(it.article_model, 80),
     article_date: ymd && /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null,
+    article_sections: Number.isFinite(it.article_sections) ? Math.max(0, Math.round(Number(it.article_sections))) : null,
   } as EpisodeInput;
   for (const k of STEP_COLS) out[k] = step(it[k]);
   return out;

@@ -38,19 +38,29 @@ flowchart LR
 | transcript | `.mp3.speechmatics*.srt` → speechmatics, inače `.wav.canary.srt` → canary | `none` |
 | diarized | `.wav.canary.diarized.srt` / `.mp3.speechmatics[.gemini].diarized.srt` | |
 | summary | `.wav.canary.summary.json` | `blocked` = `.wav.canary.summary.blocked.json` |
-| article | najnoviji `.wav.canary.diarized_{datum}_{model}.article.json` | `partial` < 2000 B (krnji); `blocked` = `.wav.canary.diarized.blocked.json` |
+| article | najnoviji `.wav.canary.diarized_{datum}_{model}.article.json` s ≥1 sekcijom | `partial` = 0 sekcija / neispravan JSON (krnji); `blocked` = `.wav.canary.diarized.blocked.json` |
 | magisterium_hr / _en / article_en | `{najnoviji članak}.article.magisterium[.en].json` / `.article.en.json` | `partial` = postoji samo uz STARIJI članak |
 | screenshots | `_screenshots` | `na` = audio-only (`_yt_matched === false`) |
 | words | `.words.json` | `na` = `.words.skipped.json` |
 | rag / epub | `.rag_combined.jsonl` / `.epub` | |
 
 Isti `_unlisted` + kanal duplikat → pobjeđuje pravi kanal. Sadržaj članka (iteracije vs outline)
-i dalje validira `fetch.domovina.tv/audit_pipeline.js`; ovdje je samo heuristika po veličini.
+i dalje validira `fetch.domovina.tv/audit_pipeline.js`; ovdje se samo broje sekcije (`article_sections`,
+migracija 0015, čitanje svih članaka ~10 s).
 
 ## 🕊 akcije
 
 `POST /admin/episodes/:id/magisterium-hr|-en` → `enqueueMagisteriumJob`. HR samo uz `article=ok`,
 EN samo uz `magisterium_hr=ok` (server i UI). `partial` → `force=1` (regeneriraj nad novim člankom).
+
+### 🕊 EN — što stvarno radi i upozorenje za duge članke (v0.21.1)
+
+EN **ne zove Magisterium MCP**. Poller pokrene runbook s `+EN`; HR dio se preskače (već gotov), a
+korak 6 (`translate_to_english.js`, Vertex **Gemini 3.8 Flash**, per-token naplata) prevede
+`summary.json`, `article.json` i `article.magisterium.json` → `*.en.json`. Dakle isti klik napravi i
+EN članak. Trajanje ≈ **100 s × broj sekcija**, a poller prekida nakon 60 min (`MAG_RUN_TIMEOUT_MS`).
+Od **25 sekcija** gumb je označen „🕊 EN ⚠" (tooltip s procjenom) i traži potvrdu; preporuka je EN
+ručno u fetch repou (MAGISTERIUM_MCP_RUN.md, korak 6). Server ne blokira.
 
 ## Otkriveni videi (fix uz ovo)
 

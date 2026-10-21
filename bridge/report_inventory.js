@@ -64,10 +64,8 @@ function splitName(name) {
 // ne završavaju na `.article.json`, pa ih regex ne hvata.
 const ARTICLE_RE = /^\.wav\.canary\.diarized_(\d{4}-\d{2}-\d{2})_(.+?)\.article\.json$/;
 const MEDIA_RE = /^(?:\.f\d+)?\.(?:mkv|mp4|webm|mp3|m4a|wav)$/;
-// Mali article.json je krnji (2026-08-28: 279 B s `"iterations": []`). Sadržaj validira
-// audit_pipeline.js; ovdje samo jeftina heuristika po veličini, bez čitanja datoteke.
-const ARTICLE_MIN_BYTES = 2000;
 
+// Čita i info.json i članak (JSON s diska); neispravan/nedostupan → null.
 function readInfo(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -101,14 +99,15 @@ function classify(ep) {
   const stems = articles.map((a) => a.slice(0, -'.article.json'.length));
   const latestStem = latest ? latest.slice(0, -'.article.json'.length) : null;
   let article = 'missing';
+  let sections = null;
   if (latest) {
-    let size = ARTICLE_MIN_BYTES;
-    try {
-      size = fs.statSync(path.join(ep.dir, ep.prefix + latest)).size;
-    } catch {
-      /* stat pao (disk) → ne proglašavaj krnjim na slijepo */
+    // Broj sekcija = Σ iterations[].sections — o njemu ovisi trajanje EN prijevoda (~100 s/sekciji).
+    // Članak bez ijedne sekcije je krnji (2026-08-28: 279 B s `"iterations": []`).
+    const art = readInfo(path.join(ep.dir, ep.prefix + latest));
+    if (art && Array.isArray(art.iterations)) {
+      sections = art.iterations.reduce((n, it) => n + (Array.isArray(it && it.sections) ? it.sections.length : 0), 0);
     }
-    article = size < ARTICLE_MIN_BYTES ? 'partial' : 'ok';
+    article = sections ? 'ok' : 'partial';
   } else if (has('.wav.canary.diarized.blocked.json')) {
     article = 'blocked';
   }
@@ -137,6 +136,7 @@ function classify(ep) {
         ? 'blocked'
         : 'missing',
     article,
+    article_sections: sections,
     article_model: am ? am[2] : null,
     article_date: am ? am[1] : null,
     rag: has('.rag_combined.jsonl') ? 'ok' : 'missing',

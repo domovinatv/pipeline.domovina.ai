@@ -28,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.21.0';
+export const APP_VERSION = 'v0.21.1';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -1266,6 +1266,7 @@ ${navTabs('episodes')}
 .epstep.na      { background: #F6F7F9; color: #9AA3AD; }
 .epstep.busy    { background: #E7EEF8; color: #1D4ED8; border-color: #CDDDF6; }
 .epstep.unknown { background: var(--card); color: #9AA3AD; }
+button.act.a-long { color: #92400E; border-color: #FDE68A; background: #FFFBEB; }
 .stat.clickable { cursor: pointer; }
 .stat.clickable.active { box-shadow: var(--ring); }
 </style>
@@ -1276,6 +1277,10 @@ var STEPS = ${JSON.stringify(EPISODE_STEPS)};
 ${SHARED_CLIENT_JS}
 var pChannel = '', pSince = '';
 var GLYPH = { ok:'✓', missing:'✗', partial:'◐', blocked:'⛔', na:'–' };
+// EN prijevod traje ~100 s po sekciji članka, a magisterium_poller prekida run nakon 60 min
+// (MAG_RUN_TIMEOUT_MS). Od ~25 sekcija runbook preporučuje EN ručno, ne kroz poller
+// (fetch.domovina.tv/docs/2026-08-29-magisterium-en-overlay-trosak.md).
+var EN_SEC_PER_SECTION = 100, EN_LONG_SECTIONS = 25;
 // Stanje koraka za prikaz. ⏳ ima prednost: Magisterium zahtjev queued/running ili aktivan job.
 function stepState(e, key){
   if (key==='magisterium_hr' && (e.mag_hr_state==='queued'||e.mag_hr_state==='running')) return 'busy';
@@ -1290,7 +1295,7 @@ function stepChips(e){
     var st = stepState(e, s.key);
     var g = st==='busy' ? '⏳' : st==='unknown' ? '?' : (GLYPH[st]||'');
     var extra = s.key==='transcript' && e.transcript!=='none' ? ' '+e.transcript : (s.key==='article' && e.article_model ? ' '+e.article_model : '');
-    var tip = s.label+': '+st+(s.key==='article' && e.article_date ? ' ('+e.article_date+')' : '');
+    var tip = s.label+': '+st+(s.key==='article' && e.article_date ? ' ('+e.article_date+(e.article_sections?', '+e.article_sections+' sekcija':'')+')' : '');
     return '<span class="epstep '+st+'" title="'+esc(tip)+'">'+g+' '+esc(s.label)+esc(extra)+'</span>';
   }).join('')+'</div>';
 }
@@ -1302,7 +1307,11 @@ function epActions(e){
   if (e.article==='ok' && !hrBusy && e.magisterium_hr!=='ok') b.push('<button class="act a-requeue" data-id="'+esc(e.youtube_id)+'" data-act="magisterium-hr" title="Pokreni Magisterium HR (MCP poller)">🕊 HR</button>');
   if (e.article==='ok' && !enBusy && e.magisterium_en!=='ok') {
     var hrOk = e.magisterium_hr==='ok';
-    b.push('<button class="act a-requeue" data-id="'+esc(e.youtube_id)+'" data-act="magisterium-en"'+(hrOk?' title="Pokreni Magisterium EN overlay"':' disabled title="EN tek kad je Magisterium HR gotov"')+'>🕊 EN</button>');
+    var n = e.article_sections, eta = n ? Math.round(n*EN_SEC_PER_SECTION/60) : null;
+    var long = !!(n && n >= EN_LONG_SECTIONS);
+    var tip = !hrOk ? 'EN tek kad je Magisterium HR gotov'
+      : 'Prijevod HR → EN (Gemini) — summary, članak i Magisterium'+(eta?' · '+n+' sekcija ≈ '+eta+' min':'')+(long?' · ⚠ dulje od limita pollera (60 min)':'');
+    b.push('<button class="act a-requeue'+(long?' a-long':'')+'" data-id="'+esc(e.youtube_id)+'" data-act="magisterium-en"'+(long?' data-sections="'+n+'"':'')+(hrOk?'':' disabled')+' title="'+esc(tip)+'">🕊 EN'+(long?' ⚠':'')+'</button>');
   }
   b.push('<a class="tab" style="padding:.28rem .6rem;font-size:.78rem;" href="https://domovina.ai/v/'+esc(e.youtube_id)+'" target="_blank" rel="noopener">▶ domovina.ai</a>');
   return '<div class="actwrap">'+b.join('')+'</div>';
@@ -1346,7 +1355,8 @@ async function refresh(){
     reloadExpanded();
   } catch(e) {}
 }
-async function act(id, action){
+async function act(id, action, sections){
+  if (sections && !confirm('Članak ima '+sections+' sekcija — EN prijevod traje oko '+Math.round(sections*EN_SEC_PER_SECTION/60)+' min, a poller prekida run nakon 60 min.\\n\\nZahtjev će vjerojatno završiti kao failed (dio prijevoda ostane na disku). Preporuka: EN pokrenuti ručno u fetch.domovina.tv (MAGISTERIUM_MCP_RUN.md, korak 6).\\n\\nSvejedno poslati kroz poller?')) return false;
   var m = document.getElementById('eMagModel');
   try {
     var r = await fetch('/admin/episodes/'+encodeURIComponent(id)+'/'+action, {
@@ -1374,7 +1384,11 @@ document.getElementById('stats').addEventListener('click', function(e){
 document.getElementById('rows').addEventListener('click', function(e){
   if (handleRowClick(e)) return;
   var b = e.target.closest('button.act');
-  if (b && !b.disabled) { b.classList.add('busy'); act(b.dataset.id, b.dataset.act); }
+  if (b && !b.disabled) {
+    var sec = b.dataset.sections ? parseInt(b.dataset.sections,10) : 0;
+    b.classList.add('busy');
+    act(b.dataset.id, b.dataset.act, sec).then(function(sent){ if (sent===false) b.classList.remove('busy'); });
+  }
 });
 refresh();
 </script>`;

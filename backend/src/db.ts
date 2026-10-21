@@ -1162,12 +1162,12 @@ export async function setDiscoveredState(
 
 // ───────────────────────── Inventar epizoda (episodes) ─────────────────────────
 const EP_COLS =
-  'youtube_id, channel_dir, channel, title, upload_date, duration_seconds, audio_only, fetch, transcript, diarized, summary, article, article_model, article_date, rag, screenshots, epub, words, magisterium_hr, magisterium_en, article_en, cdn, cdn_checked_at, first_seen_at, updated_at';
+  'youtube_id, channel_dir, channel, title, upload_date, duration_seconds, audio_only, fetch, transcript, diarized, summary, article, article_model, article_date, article_sections, rag, screenshots, epub, words, magisterium_hr, magisterium_en, article_en, cdn, cdn_checked_at, first_seen_at, updated_at';
 
 // Stupci koje piše disk-scan (bridge/report_inventory.js). Sve osim cdn* i vremena.
 const EP_DISK_COLS = [
   'channel_dir', 'channel', 'title', 'upload_date', 'duration_seconds', 'audio_only',
-  'fetch', 'transcript', 'diarized', 'summary', 'article', 'article_model', 'article_date',
+  'fetch', 'transcript', 'diarized', 'summary', 'article', 'article_model', 'article_date', 'article_sections',
   'rag', 'screenshots', 'epub', 'words', 'magisterium_hr', 'magisterium_en', 'article_en',
 ] as const;
 

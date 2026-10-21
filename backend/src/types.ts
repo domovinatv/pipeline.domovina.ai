@@ -375,6 +375,7 @@ export interface EpisodeRow {
   article: string;
   article_model: string | null;
   article_date: string | null;
+  article_sections: number | null; // Σ sekcija najnovijeg članka — trajanje EN prijevoda
   rag: string;
   screenshots: string;
   epub: string;

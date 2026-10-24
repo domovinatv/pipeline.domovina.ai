@@ -10,7 +10,8 @@
  * kolidira s noćnim bulkom). Po jobu:
  *   claim (priority:true) → run_pipeline.sh --unlisted-url ... --with-modal-transcribe
  *   --modal-only <id> --with-local-canary-diarize --with-r2-upload
- *   [--with-speechmatics --gemini-refine-promote]   (job.transcription='speechmatics')
+ *   [--with-soniox --with-pyannote-ai --gemini-refine-promote + env GEMINI_REFINE_SKELETON=auto]
+ *   (default, kao nightly od 24.10.2026.; samo transcription='canary' ide bez toga — plan.js)
  *   → uspjeh (info.json u _unlisted) → PATCH transcribing; neuspjeh → PATCH failed.
  * Wrapper nakon toga pokrene reconcile.js koji gotove flipne u done + detail_url.
  *
@@ -22,7 +23,7 @@
  *   PRIORITY_DAILY_MAX         (default 30 — koliko prioritetnih po lokalnom danu, ukupno)
  *   PRIORITY_BUDGET_FILE       (default ~/.cache/domovina-pipeline/priority_budget.json)
  *
- * Dnevni budžet je zadnja kočnica za novac (Speechmatics/Modal/LLM): drži se LOKALNO, pa
+ * Dnevni budžet je zadnja kočnica za novac (Soniox/pyannoteAI/Speechmatics/Modal/LLM): drži se LOKALNO, pa
  * vrijedi i kad je Worker/baza kompromitirana (incident 14.10. — kroz admin bypass moglo se
  * ubaciti 10 000 prioritetnih jobova). Kad je potrošen, poller ne claima ništa do ponoći;
  * jobovi čekaju u queued. Svjesno više za danas: PRIORITY_DAILY_MAX u plistu ili obriši fajl.
@@ -43,7 +44,7 @@ const UNLISTED_DIR = path.join(FETCH_REPO, 'storage', 'output', '_unlisted');
 const RUN_PIPELINE = path.join(FETCH_REPO, 'run_pipeline.sh');
 const SITE_BASE = process.env.SITE_BASE || 'https://domovina.ai';
 // Mapiranje izbora joba → zastavice (i whitelist backenda) živi u plan.js, pokriven testom.
-const { planFor } = require('./plan');
+const { planFor, transcriptionFlow, FLOW_LABELS } = require('./plan');
 
 if (!INGEST_KEY) {
   console.error('❌ PIPELINE_QUEUE_INGEST_KEY nije postavljen — preskačem prioritetni poller.');
@@ -200,7 +201,7 @@ function writeBudget(b) {
       continue;
     }
 
-    console.log(`  🎙 transkripcija: ${job.transcription === 'speechmatics' ? 'Speechmatics + Gemini sluh (+ Modal Canary)' : 'Modal Canary + pyannote'}`);
+    console.log(`  🎙 transkripcija: ${FLOW_LABELS[transcriptionFlow(job)]}`);
     spawnSync(RUN_PIPELINE, plan.args, { cwd: FETCH_REPO, stdio: 'inherit', env });
 
     // Ne vjeruj exit kodu (run_pipeline je set -e-toleran, non-fatalni koraci); provjeri disk.

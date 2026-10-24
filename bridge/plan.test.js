@@ -1,7 +1,7 @@
 // Mapiranje izbora joba → što priority_poller pokreće. `node --test bridge/`
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { planFor } = require('./plan');
+const { planFor, transcriptionFlow } = require('./plan');
 
 const ALL = { replace: true, reprocess: true, reprocessArticle: true };
 const base = {
@@ -30,9 +30,44 @@ test('običan prioritetni job s Canaryjem: bit-identično dosadašnjem pozivu', 
   assert.deepEqual(p.reuseArgs, ['--video-id', '6e1MW97dv10']);
 });
 
-test('Speechmatics: + --with-speechmatics --gemini-refine-promote, Modal Canary ostaje', () => {
+const CLOUD = ['--with-soniox', '--with-pyannote-ai', '--gemini-refine-promote'];
+
+test("'speechmatics' (default Workera) → Soniox + pyannoteAI + Gemini sluh, kao nightly", () => {
   const p = planFor({ ...base, transcription: 'speechmatics' }, ALL);
-  assert.ok(has(p.args, '--with-speechmatics', '--gemini-refine-promote', '--with-modal-transcribe'));
+  assert.equal(p.error, null);
+  assert.ok(has(p.args, ...CLOUD));
+  // Modal Canary + lokalni pyannote ostaju kao osigurač (isto kao nightly).
+  assert.ok(has(p.args, '--with-modal-transcribe', '--modal-only', '--with-local-canary-diarize'));
+  // Stari put je ispao: Speechmatics je sad fallback UNUTAR 2.7b, ne zaseban korak.
+  assert.ok(!p.args.includes('--with-speechmatics'));
+  assert.deepEqual(p.env, { CLAUDE_MODEL: 'opus', GEMINI_REFINE_SKELETON: 'auto' });
+});
+
+test("'soniox' alias i izostavljena vrijednost → isti cloud tok", () => {
+  for (const transcription of ['soniox', undefined, null, '']) {
+    const p = planFor({ ...base, transcription }, ALL);
+    assert.ok(has(p.args, ...CLOUD), String(transcription));
+    assert.equal(p.env.GEMINI_REFINE_SKELETON, 'auto');
+  }
+});
+
+test('cloud tok s vertex backendom: env nosi samo kostur', () => {
+  const p = planFor({ ...base, transcription: 'speechmatics', llm_backend: 'vertex', llm_model: null }, ALL);
+  assert.deepEqual(p.env, { GEMINI_REFINE_SKELETON: 'auto' });
+});
+
+test("'canary': bez cloud zastavica i bez GEMINI_REFINE_SKELETON", () => {
+  const p = planFor(base, ALL);
+  for (const f of [...CLOUD, '--with-speechmatics']) assert.ok(!p.args.includes(f), f);
+  assert.ok(!('GEMINI_REFINE_SKELETON' in p.env));
+});
+
+test('transcriptionFlow mapiranje', () => {
+  assert.equal(transcriptionFlow({ transcription: 'speechmatics' }), 'cloud');
+  assert.equal(transcriptionFlow({ transcription: 'soniox' }), 'cloud');
+  assert.equal(transcriptionFlow({}), 'cloud');
+  assert.equal(transcriptionFlow({ transcription: 'canary' }), 'canary');
+  assert.equal(transcriptionFlow({ transcription: 'none' }), 'none');
 });
 
 test('vertex backend se ne prosljeđuje i ne postavlja CLAUDE_MODEL', () => {
@@ -82,7 +117,8 @@ test('ponovna obrada s prijepisom: run_pipeline dobiva --reprocess', () => {
   const p = planFor({ ...base, reprocess: 1, transcription: 'speechmatics' }, ALL);
   assert.equal(p.error, null);
   assert.ok(p.args.includes('--reprocess'));
-  assert.ok(p.args.includes('--with-speechmatics'));
+  assert.ok(has(p.args, ...CLOUD));
+  assert.equal(p.env.GEMINI_REFINE_SKELETON, 'auto');
 });
 
 test('obična (ne-reprocess) obrada: bez --reprocess', () => {

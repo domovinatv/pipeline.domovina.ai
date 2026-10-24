@@ -127,6 +127,7 @@ postojala, samo je nitko nije prosljeđivao.
 
 | Korak | Gdje se odlučuje | Što bridge napravi |
 |---|---|---|
+| 2.6–2.8 (transkripcija) | `jobs.transcription` | `plan.js`: sve osim `canary` (dakle i povijesni `speechmatics`, alias `soniox`, izostavljeno) → `--with-soniox --with-pyannote-ai --gemini-refine-promote` + env `GEMINI_REFINE_SKELETON=auto`, isto kao nightly od 24.10.2026.; Modal Canary (2.6) i lokalni pyannote (6) ostaju kao osigurač. `canary` = samo Modal Canary + pyannote |
 | 7+8 (sažetak + outline + članak) | `jobs.llm_backend` + `llm_model` | `priority_poller.js` doda `--gemini-backend <b>` i postavi `CLAUDE_MODEL` u env `run_pipeline.sh`-a |
 | 8.5 (Magisterium MCP) | `magisterium_jobs.model` (naslijeđen s `jobs.magisterium_model`) | `magisterium_poller.js` pokrene `claude --model <m> -p …` |
 

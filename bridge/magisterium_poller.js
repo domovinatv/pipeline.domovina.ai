@@ -8,14 +8,17 @@
  * workflow (fetch.domovina.tv/docs/MAGISTERIUM_MCP_RUN.md) headless preko Claude Code CLI,
  * pa verificira artefakt na CDN-u i javi ishod natrag u queue.
  *
- * ZAŠTO Claude Code, a ne node skripta: produkcijski Magisterium ide ISKLJUČIVO preko
- * Magisterium MCP-a (prep → chat → assemble), koji je LLM-driven. Runbook je pisan tako da
- * ga Claude Code odradi autonomno. Poller je samo "ruka" koja ga pokreće po zahtjevu.
+ * Magisterium ide ISKLJUČIVO preko Magisterium MCP-a (prep → chat → assemble). Do 24.10.2026.
+ * chat je zvao Claude agent (claude -p), što je bilo usko grlo (kontekst 200-260k, 21 min - 2.4 h
+ * po epizodi). Sada ga zove skripta izravno — fetch.domovina.tv/docs/2026-10-24-magisterium-mcp-bez-llm-a.md.
  *
  * Po zahtjevu:
  *   1) CDN pre-check — ako artefakt VEĆ postoji (article.magisterium[.en].json 200) → done
  *      (idempotentno; ne troši tokene na ono što je gotovo — bitno za auto-enqueue granu).
- *   2) HR: claude -p "@docs/MAGISTERIUM_MCP_RUN.md <VID>" (cwd = FETCH_REPO).
+ *   2) HR: node tools/magisterium_mcp_episode.js --video-id <VID> (cwd = FETCH_REPO) — od
+ *      24.10.2026. BEZ LLM-a: Magisterium MCP se zove izravno (OAuth Pro token), ~10 min za
+ *      13 sekcija, 0 Claude kvote. Stari put (MAG_RUNNER=claude) ostaje kao fallback:
+ *      claude -p "@docs/MAGISTERIUM_MCP_RUN.md <VID>".
  *      EN: BEZ Claudea — translate_to_english.js (Vertex Gemini) + objava pod pipeline lockom.
  *   3) CDN verifikacija (GET, ne HEAD — CF cache-ira 404) → done | failed(+error).
  *
@@ -34,7 +37,8 @@
  *                               korišteni pa kvaliteta varira Fable/Sonnet/Haiku/Opus)
  *   CLAUDE_PERMISSION_MODE     (default 'bypassPermissions' — headless runbook radi bash/MCP/R2 bez interakcije)
  *   MAG_MAX                    (default 2 — koliko zahtjeva po ticku; chat je rate-limitiran 15/min)
- *   MAG_RUNNER                 ('claude' default | 'manual' = samo ispiši komande, ne pokreći/claimaj)
+ *   MAG_RUNNER                 ('direct' default = tools/magisterium_mcp_episode.js, bez LLM-a |
+ *                               'claude' = stari runbook kroz claude -p | 'manual' = samo ispiši komande)
  *   MAG_RUN_TIMEOUT_MS         (default 3_600_000 = 60 min po HR videu; run traje ~14 min prosjek)
  *   MAG_EN_TIMEOUT_MAX_MS      (default 4 h — gornja granica EN prijevoda; inače 30 min + 5 min/sekciji)
  */
@@ -58,7 +62,7 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'opus';
 // a vrijednost dolazi iz baze (drugi servis) — ne vjerujemo joj na slijepo.
 const ALLOWED_MODELS = ['opus', 'sonnet', 'haiku'];
 const MAG_MAX = parseInt(process.env.MAG_MAX || '2', 10);
-const MAG_RUNNER = process.env.MAG_RUNNER || 'claude';
+const MAG_RUNNER = process.env.MAG_RUNNER || 'direct';
 const RUN_TIMEOUT_MS = parseInt(process.env.MAG_RUN_TIMEOUT_MS || '3600000', 10);
 const EN_TIMEOUT_MAX_MS = parseInt(process.env.MAG_EN_TIMEOUT_MAX_MS || String(4 * 3600000), 10);
 // Objava čeka pipeline lock do 30 min (with_pipeline_lock.sh), pa sam upload.
@@ -253,6 +257,16 @@ function runRunbook(youtubeId, lang, model, force) {
   return true;
 }
 
+// HR bez LLM-a: deterministički orkestrator u fetch repou (prep → MCP chat → assemble →
+// publish → CDN md5). Exit kod je informativan; izvor istine ostaje CDN provjera ispod.
+function runDirect(youtubeId, force) {
+  const args = ['tools/magisterium_mcp_episode.js', '--video-id', youtubeId];
+  if (force) args.push('--force');
+  const r = spawnSync('node', args, { cwd: FETCH_REPO, stdio: 'inherit', timeout: RUN_TIMEOUT_MS });
+  if (r.error) console.error(`  ⚠️ magisterium_mcp_episode.js: ${r.error.message}`);
+  else if (r.status !== 0) console.error(`  ⚠️ magisterium_mcp_episode.js izašao s ${r.status}`);
+}
+
 (async () => {
   // Manual mod: samo ispiši queued zahtjeve + točne komande za ručno pokretanje (bez claima).
   if (MAG_RUNNER === 'manual') {
@@ -262,7 +276,7 @@ function runRunbook(youtubeId, lang, model, force) {
     for (const j of jobs) {
       console.log(j.lang === 'en'
         ? `  • ${j.youtube_id} [en] → cd ${FETCH_REPO} && node translate_to_english.js --input-dir storage/output --video-id ${j.youtube_id}  (pa korak 7 runbooka)`
-        : `  • ${j.youtube_id} [hr] → cd ${FETCH_REPO} && ${CLAUDE_BIN} --model ${modelFor(j)} -p "@docs/MAGISTERIUM_MCP_RUN.md ${j.youtube_id}"`);
+        : `  • ${j.youtube_id} [hr] → cd ${FETCH_REPO} && node tools/magisterium_mcp_episode.js --video-id ${j.youtube_id}`);
     }
     return;
   }
@@ -272,7 +286,8 @@ function runRunbook(youtubeId, lang, model, force) {
   // u 08:30. Provjera ide PRIJE claima — claimane jobove ne želimo ostaviti visjeti.
   // Preko dana arbitar propušta (granica 08:30 je tek sutra), pa ovo ne usporava
   // ad-hoc zahtjeve; blokira samo ~03:20–08:30. Vidi launchd-menubar/SCHEDULING.md.
-  if (claudeWindowClosed()) {
+  // Direct runner ne troši Claude kvotu, pa ga ograda ne zaustavlja.
+  if (MAG_RUNNER === 'claude' && claudeWindowClosed()) {
     return console.log(`⏸️  Claude prozor: ${claudeWindowReason()} — preskačem tick.`);
   }
 
@@ -305,6 +320,9 @@ function runRunbook(youtubeId, lang, model, force) {
         reportInventory(job.youtube_id);
         continue;
       }
+    } else if (MAG_RUNNER === 'direct') {
+      console.log(`  ▶ pokrećem Magisterium MCP izravno (magisterium_mcp_episode.js) — ~1 min po sekciji…`);
+      runDirect(job.youtube_id, job.force);
     } else {
       const model = modelFor(job);
       console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${model} -p …) — može potrajati ~14 min…`);
@@ -318,7 +336,7 @@ function runRunbook(youtubeId, lang, model, force) {
     } else {
       await api('PATCH', `/api/magisterium/${job.id}`, {
         state: 'failed',
-        error: `run završio, ali ${artifactName(job.lang)} nije na CDN-u (provjeri Claude CLI/MCP izlaz)`,
+        error: `run završio, ali ${artifactName(job.lang)} nije na CDN-u (provjeri ${MAG_RUNNER === 'direct' ? 'magisterium_mcp_episode.js / MCP token' : 'Claude CLI/MCP'} izlaz)`,
       });
       console.log(`  ❌ nema artefakta nakon runa → failed`);
     }

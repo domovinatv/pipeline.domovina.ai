@@ -24,9 +24,9 @@ export PRIORITY_DAILY_MAX="30"                        # priority_poller: dnevni 
 export CDN_BASE="https://cdn.domovina.ai"            # reconcile + magisterium_poller
 export SITE_BASE="https://domovina.ai"               # reconcile (detail_url)
 # magisterium_poller:
-export CLAUDE_BIN="claude"                            # Claude Code CLI (mora imati Magisterium MCP u sesiji)
-export MAG_MAX="2"                                    # zahtjeva po ticku (chat rate-limit 15/min)
-export MAG_RUNNER="claude"                            # 'claude' = pokreni headless | 'manual' = samo ispiši komande
+export MAG_MAX="2"                                    # zahtjeva po ticku (chat stvarno propušta ~2,5/min)
+export MAG_RUNNER="direct"                            # 'direct' (default) = magisterium_mcp_episode.js bez LLM-a | 'claude' = stari headless runbook | 'manual' = samo ispiši komande
+export CLAUDE_BIN="claude"                            # samo za MAG_RUNNER=claude (mora imati Magisterium MCP u sesiji)
 # report_discovered:
 export DISCOVERED_LOOKBACK_HOURS="26"                 # prozor skeniranja (pokriva jedan nightly ciklus)
 ```
@@ -35,7 +35,14 @@ Bez `PIPELINE_QUEUE_INGEST_KEY` sve skripte ispišu upozorenje i **exit 0** (ne 
 
 ## Magisterium poller — preduvjeti i tok
 
-`magisterium_poller.js` pokreće produkcijski hibridni Magisterium MCP workflow
+**Od 24.10.2026. default je `MAG_RUNNER=direct`:** poller za HR pokreće
+`fetch.domovina.tv/tools/magisterium_mcp_episode.js --video-id <VID>`, koji zove Magisterium MCP
+izravno (OAuth token u `~/.config/magisterium-mcp/token.json`, jednokratno
+`node tools/magisterium_mcp_client.js login`), bez Claudea i bez `claude-window` ograde.
+Detalji: `fetch.domovina.tv/docs/2026-10-24-magisterium-mcp-bez-llm-a.md`. Ostatak ovog
+odjeljka opisuje stari put (`MAG_RUNNER=claude`).
+
+`magisterium_poller.js` (MAG_RUNNER=claude) pokreće produkcijski hibridni Magisterium MCP workflow
 (`fetch.domovina.tv/docs/MAGISTERIUM_MCP_RUN.md`) **headless** preko Claude Code CLI
 (`claude -p`). Zato Claude Code na Macu **mora imati Magisterium MCP dostupan** (interaktivno
 autenticiran MCP možda nije prisutan u čistom cron/headless kontekstu — testiraj `MAG_RUNNER=manual`

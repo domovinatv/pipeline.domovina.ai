@@ -30,7 +30,7 @@ export interface CreateJobInput {
   llmBackend?: string; // 'vertex' (default) | 'cli' | 'claude' — backend koraka 7+8
   llmModel?: string | null; // NULL = default tog backenda; inače 'opus'|'sonnet'|'haiku'
   magisteriumModel?: string | null; // NULL = 'opus' — model MCP runbooka (korak 8.5)
-  transcription?: string; // 'speechmatics' (default) | 'canary' | 'none' (samo reprocess)
+  transcription?: string; // 'soniox' (default) | 'canary' | 'none' (samo reprocess)
   reprocess?: boolean; // namjerna ponovna obrada već objavljene epizode
   redoArticle?: boolean; // default true; false samo uz reprocess i transcription='none'
 }
@@ -114,7 +114,7 @@ export async function createImportedJob(
 }
 
 // Gornja granica reda (incident 14.10.: kroz admin bypass moglo se ubaciti 10 000 jobova,
-// a svaki prioritetni troši Speechmatics/Modal/LLM). Brojimo samo 'queued' — ono što je
+// a svaki prioritetni troši Soniox/pyannoteAI/Modal/LLM). Brojimo samo 'queued' — ono što je
 // već uzeto ograničava bridge sam (PRIORITY_MAX po ticku + dnevni budžet).
 export const MAX_QUEUED_TOTAL = 50;
 export const MAX_QUEUED_PER_KEY = 10;
@@ -178,7 +178,7 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.llmBackend ?? 'claude',
       input.llmModel ?? (input.llmBackend == null ? 'opus' : null),
       input.magisteriumModel ?? null,
-      // Default za NOVE jobove: kao nightly (Speechmatics + Gemini sluh). Migracija 0011
+      // Default za NOVE jobove: kao nightly (Soniox + pyannoteAI + Gemini sluh). Migracija 0011
       // ima DEFAULT 'canary' samo zato da postojeći reci ostanu istiniti.
       input.transcription ?? DEFAULT_TRANSCRIPTION,
       input.reprocess ? 1 : 0,

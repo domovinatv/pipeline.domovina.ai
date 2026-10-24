@@ -103,7 +103,7 @@ test('ponovna obrada: default izbori = Speechmatics + novi Opus članak + Magist
   const html = await (await post(db, { url: '6e1MW97dv10' })).text();
   const f = hiddenFields(html);
   assert.equal(f.reprocess, '1');
-  assert.equal(f.transcription, 'speechmatics');
+  assert.equal(f.transcription, 'soniox');
   assert.equal(f.article_mode, 'new');
   assert.equal(f.article_model, 'claude:opus');
   assert.equal(f.with_magisterium, '1');
@@ -112,7 +112,7 @@ test('ponovna obrada: default izbori = Speechmatics + novi Opus članak + Magist
   assert.equal(row.reprocess, 1);
   assert.equal(row.priority, 1);
   assert.equal(row.redo_article, 1);
-  assert.equal(row.transcription, 'speechmatics');
+  assert.equal(row.transcription, 'soniox');
   assert.equal(row.llm_backend, 'claude');
   assert.equal(row.llm_model, 'opus');
 });
@@ -143,7 +143,7 @@ test("'none' prijepis izvan ponovne obrade pada na default", async () => {
   const { db, calls } = fakeDb();
   await post(db, { url: '6e1MW97dv10', transcription: 'none' });
   const row = insertBinds(calls);
-  assert.equal(row.transcription, 'speechmatics');
+  assert.equal(row.transcription, 'soniox');
   assert.equal(row.reprocess, 0);
 });
 
@@ -152,7 +152,7 @@ test('novi job bez izbora transkripcije dobije Speechmatics (kao nightly)', asyn
   const res = await post(db, { url: '6e1MW97dv10', title: 'Pravi naslov' });
   assert.equal(res.status, 303);
   const row = insertBinds(calls);
-  assert.equal(row.transcription, 'speechmatics');
+  assert.equal(row.transcription, 'soniox');
   assert.equal(row.title, 'Pravi naslov');
 });
 

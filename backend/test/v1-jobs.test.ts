@@ -60,7 +60,7 @@ function insertBinds(calls: Call[]): Record<string, unknown> {
   return row;
 }
 
-test('enqueue bez izbora = maksimalna kvaliteta (Opus članak, Magisterium, Speechmatics)', async () => {
+test('enqueue bez izbora = maksimalna kvaliteta (Opus članak, Magisterium, Soniox)', async () => {
   const { db, calls } = fakeDb();
   const r = await post(db, '/jobs', { url: '6e1MW97dv10', tier: 'priority' });
   assert.equal(r.status, 201);
@@ -68,7 +68,7 @@ test('enqueue bez izbora = maksimalna kvaliteta (Opus članak, Magisterium, Spee
   assert.equal(row.llm_backend, 'claude');
   assert.equal(row.llm_model, 'opus');
   assert.equal(row.with_magisterium, 1);
-  assert.equal(row.transcription, 'speechmatics');
+  assert.equal(row.transcription, 'soniox');
   assert.equal(row.credit_cost, 5);
   assert.equal(row.api_key_id, 'key1');
 });
@@ -148,4 +148,13 @@ test('limit reda je u samom INSERT-u, i po ključu', async () => {
   const ins = calls.find((c) => c.sql.includes('INSERT INTO jobs'))!;
   assert.match(ins.sql, /WHERE \(SELECT COUNT\(\*\) FROM jobs WHERE state = 'queued'/);
   assert.deepEqual(ins.binds.slice(-4), [MAX_QUEUED_TOTAL, 'key1', 'key1', MAX_QUEUED_PER_KEY]);
+});
+
+test("zastarjeli transcription='speechmatics' = alias za 'soniox' (stari klijenti ne pucaju)", async () => {
+  const { db, calls } = fakeDb();
+  const r = await post(db, '/jobs', { url: '6e1MW97dv10', tier: 'priority', transcription: 'speechmatics' });
+  assert.equal(r.status, 201);
+  const row = insertBinds(calls);
+  assert.equal(row.transcription, 'soniox');
+  assert.equal(row.credit_cost, 5);
 });

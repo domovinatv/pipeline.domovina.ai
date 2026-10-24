@@ -148,15 +148,17 @@ export function parseMagisteriumModel(value: string | null | undefined): Magiste
 // Vrijedi za PRIORITETNI fast-path (priority_poller.js → run_pipeline.sh). Standardni jobovi
 // idu kroz nightly batch, koji ima vlastitu globalnu konfiguraciju (od 24.10.2026. Soniox +
 // pyannoteAI + sluh za svjež priljev), pa ovo polje na njih nema utjecaja.
-//   speechmatics — „premium cloud tok kao nightly". Ime je POVIJESNO i namjerno ostaje (ugovor
-//                  s /api/v1 klijentima, D1 redovi, priorityCost): bridge/plan.js ga od
-//                  24.10.2026. mapira na Soniox tekst (2.7b) + pyannoteAI govornike (2.7c) +
-//                  Gemini sluh (2.8, promote); Speechmatics je fallback unutar 2.7b. Uz to
-//                  Modal Canary; rezultat ima i words.json (titl riječ po riječ).
+//   soniox       — cloud tok kao nightly (od 24.10.2026.): Soniox tekst (2.7b) + pyannoteAI
+//                  govornici (2.7c) + Gemini sluh (2.8, promote); Speechmatics je fallback unutar
+//                  2.7b. Uz to Modal Canary; rezultat ima i words.json (titl riječ po riječ).
 //   canary       — samo Modal Canary + pyannote. Jeftino, bez words.json.
-export const TRANSCRIPTIONS = ['speechmatics', 'canary'] as const;
+// 'speechmatics' je ZASTARJELA vrijednost (do 24.10.2026.): ulaz je i dalje prihvaća kao alias
+// za 'soniox' (stari /api/v1 klijenti), a stari D1 reci je zadržavaju jer su stvarno išli
+// Speechmaticsom. Bridge (plan.js) obje mapira na isti cloud tok.
+export const TRANSCRIPTIONS = ['soniox', 'canary'] as const;
 export type Transcription = (typeof TRANSCRIPTIONS)[number];
-export const DEFAULT_TRANSCRIPTION: Transcription = 'speechmatics';
+export const DEFAULT_TRANSCRIPTION: Transcription = 'soniox';
+export const LEGACY_TRANSCRIPTION_ALIASES: Record<string, Transcription> = { speechmatics: 'soniox' };
 
 export interface TranscriptionOption {
   value: Transcription;
@@ -166,10 +168,9 @@ export interface TranscriptionOption {
 }
 export const TRANSCRIPTION_OPTIONS: TranscriptionOption[] = [
   {
-    value: 'speechmatics',
+    value: 'soniox',
     label: 'Soniox + pyannoteAI + Gemini sluh (kao nightly) — default',
-    // Neutralno: badge se prikazuje i na starim jobovima koji su stvarno išli Speechmaticsom.
-    short: 'Cloud',
+    short: 'Soniox',
     hint: 'Soniox tekst + pyannoteAI govornici (tko/kada) + Gemini 3.8 Flash čuje zvuk i piše tekst; Speechmatics je rezerva kad Soniox padne, uz to i Modal Canary. Daje words.json (titl riječ po riječ). ~$0.4-0.7 po epizodi od 45 min.',
   },
   {
@@ -191,6 +192,7 @@ export function parseTranscription(
 ): Transcription | typeof TRANSCRIPTION_NONE | null {
   if (!value) return null;
   if (allowNone && value === TRANSCRIPTION_NONE) return TRANSCRIPTION_NONE;
+  if (LEGACY_TRANSCRIPTION_ALIASES[value]) return LEGACY_TRANSCRIPTION_ALIASES[value];
   return (TRANSCRIPTIONS as readonly string[]).includes(value) ? (value as Transcription) : null;
 }
 
@@ -202,7 +204,7 @@ export function reprocessRedoArticle(transcription: string, articleMode: string 
 }
 
 // ───────────────────────── Krediti (API ključevi) ─────────────────────────
-// Cloud tok ('speechmatics') košta naspram ~$0.01 za Canary više, pa prioritetni job s njim
+// Cloud tok ('soniox'; stari reci 'speechmatics') košta naspram ~$0.01 za Canary više, pa prioritetni job s njim
 // rezervira 2 kredita više. (Uz Speechmatics je bilo ~$2-2.5/ep; od 24.10.2026. Soniox +
 // pyannoteAI + sluh ≈ $0.4-0.7/ep — cijena u kreditima NAMJERNO nije dirana, to je
 // poslovna odluka, ne posljedica promjene ASR-a.) Standardni job ide kroz nightly (globalna konfiguracija)
@@ -210,7 +212,7 @@ export function reprocessRedoArticle(transcription: string, articleMode: string 
 // bez novog prijepisa ('none') košta kao Canary.
 export const STANDARD_COST = 1;
 export function priorityCost(transcription: string): number {
-  return transcription === 'speechmatics' ? 5 : 3;
+  return transcription === 'soniox' || transcription === 'speechmatics' ? 5 : 3;
 }
 
 // Stanja koja lokalni bridge smije postaviti preko PATCH /api/jobs/:id.
@@ -249,7 +251,7 @@ export interface JobRow {
   llm_backend: string; // 'vertex' (default) | 'cli' | 'claude' — backend koraka 7+8
   llm_model: string | null; // NULL = default tog backenda; inače slug ('opus'|'sonnet'|'haiku')
   magisterium_model: string | null; // NULL = 'opus' — model za MCP runbook (korak 8.5)
-  transcription: string; // 'speechmatics' | 'canary' | 'none' (samo reprocess) — NAMJERA za prioritetni fast-path (≠ transcribe_backend)
+  transcription: string; // 'soniox' | 'canary' | 'none' (stari reci: 'speechmatics') (samo reprocess) — NAMJERA za prioritetni fast-path (≠ transcribe_backend)
   reprocess: number; // 1 = namjerna ponovna obrada već objavljene epizode
   redo_article: number; // 0 = ne diraj postojeći članak (samo reprocess bez novog prijepisa)
   transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju
@@ -345,7 +347,8 @@ export interface ApiKeyRow {
 // ── Inventar epizoda (episodes) — sve što je na disku Mac Minija + stanje po koraku.
 // Puni ga bridge/report_inventory.js (migrations/0014). Nije queue: ništa se ne pokreće samo od sebe.
 export const EPISODE_STEP_VALUES = ['ok', 'missing', 'blocked', 'partial', 'na'] as const;
-export const EPISODE_TRANSCRIPTS = ['speechmatics', 'canary', 'none'] as const;
+// soniox = Soniox(+pyannoteAI) prijepis na disku; speechmatics = stariji cloud prijepis.
+export const EPISODE_TRANSCRIPTS = ['soniox', 'speechmatics', 'canary', 'none'] as const;
 
 // Koraci po kojima admin filtrira „fali korak X" (whitelist = imena stupaca, ide u SQL).
 // Redoslijed = run_pipeline.sh. `transcript` je poseban (vrijednost je backend, ne ok/missing).
@@ -375,7 +378,7 @@ export interface EpisodeRow {
   duration_seconds: number | null;
   audio_only: number;
   fetch: string;
-  transcript: string; // speechmatics | canary | none
+  transcript: string; // soniox | speechmatics | canary | none
   diarized: string;
   summary: string;
   article: string;

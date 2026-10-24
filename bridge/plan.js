@@ -33,13 +33,12 @@ const LLM_BACKENDS = ['vertex', 'cli', 'claude', 'agy'];
 
 // ─── Transkripcija ───
 // `jobs.transcription` dolazi iz Workera (backend/src/types.ts TRANSCRIPTIONS):
-// 'speechmatics' (default u adminu i /api/v1) | 'canary' | 'none' (samo ponovna obrada).
-// Vrijednost je UGOVOR prema klijentima API-ja, D1 redovima i cijeni (priorityCost), pa je
-// NE preimenujemo: 'speechmatics' znači „premium cloud tok kao nightly", a taj je od
-// 24.10.2026. Soniox tekst (2.7b) + pyannoteAI govornici (2.7c) + Gemini sluh nad tim
-// kosturom (2.8, promote). Speechmatics nije izbačen — 2.7b ga sam zove kao fallback kad
-// Soniox padne ili nema kredita, a 2.8 `auto` tada uzme speechmatics_pyannote kostur.
-// 'soniox' je prihvaćen kao alias, da Worker kasnije može uvesti pošteno ime bez novog bridgea.
+// 'soniox' (default u adminu i /api/v1) | 'canary' | 'none' (samo ponovna obrada).
+// 'soniox' = cloud tok kao nightly od 24.10.2026.: Soniox tekst (2.7b) + pyannoteAI govornici
+// (2.7c) + Gemini sluh nad tim kosturom (2.8, promote). Speechmatics nije izbačen — 2.7b ga
+// sam zove kao fallback kad Soniox padne ili nema kredita, a 2.8 `auto` tada uzme
+// speechmatics_pyannote kostur. 'speechmatics' je zastarjela vrijednost (stari D1 reci, koji
+// mogu još čekati u redu) i ide istim cloud tokom.
 // Sve osim eksplicitnog 'canary' ide cloud tokom: jeftini put mora biti izričit izbor,
 // a izostavljena vrijednost = default kao nightly.
 const CLOUD_FLOW_ARGS = ['--with-soniox', '--with-pyannote-ai', '--gemini-refine-promote'];

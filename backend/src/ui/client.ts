@@ -157,7 +157,7 @@ const MODEL_CATALOG_JSON = JSON.stringify({
 // Cijene u kreditima (dashboard ih prikazuje uz izbor); izvor je types.ts.
 const COSTS_JSON = JSON.stringify({
   standard: STANDARD_COST,
-  priority: { speechmatics: priorityCost('speechmatics'), canary: priorityCost('canary'), none: priorityCost('none') },
+  priority: { soniox: priorityCost('soniox'), speechmatics: priorityCost('speechmatics'), canary: priorityCost('canary'), none: priorityCost('none') },
 });
 
 export const SHARED_CLIENT_JS = `
@@ -204,6 +204,7 @@ function modelBadge(j){
 }
 var TRANSCRIPTION_SHORT = {};
 MODELS.transcription.forEach(function(o){ TRANSCRIPTION_SHORT[o.value] = o.short; });
+TRANSCRIPTION_SHORT.speechmatics = 'Speechmatics'; // stari reci (do 24.10.2026.) — istinita oznaka
 function reprocessBadge(j){
   if (!j.reprocess) return '';
   var what = [j.transcription!=='none'?'prijepis':'', j.redo_article?'članak':'', j.with_magisterium?'Magisterium':''].filter(Boolean).join(' + ');
@@ -212,8 +213,8 @@ function reprocessBadge(j){
 // Transkripcija: bitna samo za prioritetne jobove (standardne vrti nightly s globalnom konfiguracijom).
 function transcriptionBadge(j){
   if (!j.priority || !j.transcription || j.transcription==='none') return '';
-  var sm = j.transcription === 'speechmatics';
-  return ' <span class="pill model" title="'+(sm?'Cloud ASR + Gemini sluh (kao nightly; od 24.10.2026. Soniox + pyannoteAI) → i words.json':'Samo Modal Canary + pyannote (jeftino, bez words.json)')+'">🎙 '+esc(TRANSCRIPTION_SHORT[j.transcription]||j.transcription)+'</span>';
+  var sm = j.transcription === 'soniox' || j.transcription === 'speechmatics';
+  return ' <span class="pill model" title="'+(sm?(j.transcription==='soniox'?'Soniox + pyannoteAI + Gemini sluh (kao nightly)':'Speechmatics + Gemini sluh (stari cloud tok)')+' → i words.json':'Samo Modal Canary + pyannote (jeftino, bez words.json)')+'">🎙 '+esc(TRANSCRIPTION_SHORT[j.transcription]||j.transcription)+'</span>';
 }
 function priorityBadge(j){
   return j.priority ? ' <span class="pill prio" title="Prioritetna obrada (Modal, odmah)">⚡ Prioritet</span>' : '';

@@ -90,7 +90,13 @@ function classify(ep) {
   const audioOnly = !!(info && info._yt_matched === false);
 
   const media = list.some((r) => MEDIA_RE.test(r));
-  const speechmatics = list.some((r) => r.startsWith('.mp3.speechmatics') && r.endsWith('.srt'));
+  // Cloud prijepis po izvoru teksta. Soniox (nightly + ad-hoc od 24.10.2026.) ima prednost:
+  // epizoda može imati i stariji Speechmatics prijepis (npr. re:DEFINICIJA), a vrijedi noviji.
+  // `{audio}.soniox.srt` (2.7b) i `{audio}.soniox_pyannote.*.srt` (2.7c/2.8), audio = .mp3 ili
+  // .wav (ručni prolazi idu nad WAV-om); speechmatics_pyannote je Speechmatics fallback unutar
+  // 2.7b, pa ostaje 'speechmatics'.
+  const soniox = list.some((r) => /^\.(mp3|wav)\.soniox/.test(r) && r.endsWith('.srt'));
+  const speechmatics = list.some((r) => /^\.(mp3|wav)\.speechmatics/.test(r) && r.endsWith('.srt'));
   const canary = has('.wav.canary.srt');
 
   const articles = list.filter((r) => ARTICLE_RE.test(r)).sort();
@@ -123,11 +129,10 @@ function classify(ep) {
     duration_seconds: info && Number.isFinite(info.duration) ? Math.round(info.duration) : null,
     audio_only: audioOnly,
     fetch: ep.infoFile ? 'ok' : media ? 'partial' : 'missing',
-    transcript: speechmatics ? 'speechmatics' : canary ? 'canary' : 'none',
+    transcript: soniox ? 'soniox' : speechmatics ? 'speechmatics' : canary ? 'canary' : 'none',
     diarized:
       has('.wav.canary.diarized.srt') ||
-      has('.mp3.speechmatics.diarized.srt') ||
-      has('.mp3.speechmatics.gemini.diarized.srt')
+      list.some((r) => /^\.(mp3|wav)\.(speechmatics|soniox)(_pyannote)?(\.gemini)?\.diarized\.srt$/.test(r))
         ? 'ok'
         : 'missing',
     summary: has('.wav.canary.summary.json')

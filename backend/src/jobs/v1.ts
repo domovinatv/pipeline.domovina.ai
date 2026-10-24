@@ -91,7 +91,7 @@ publicApi.post('/jobs', async (c) => {
     youtube_id?: string;
     title?: string;
     tier?: string;
-    transcription?: string; // 'speechmatics' (default, kao nightly) | 'canary'
+    transcription?: string; // 'soniox' (default, kao nightly) | 'canary'; 'speechmatics' = zastarjeli alias za 'soniox'
     article_model?: string; // vrijednost iz ARTICLE_MODELS (default 'claude:opus')
     with_magisterium?: boolean; // default true
     magisterium_model?: string; // 'opus' (default) | 'sonnet' | 'haiku'
@@ -99,13 +99,13 @@ publicApi.post('/jobs', async (c) => {
   const ref = await extractSourceRef(body.url || body.youtube_id || '');
   if (!ref) return c.json({ error: 'Neispravan YouTube/X URL/ID' }, 400);
   const youtubeId = ref.id;
-  // Tier: 'priority' = Modal instant (5 kredita sa Speechmatics, 3 samo Canary), inače
+  // Tier: 'priority' = Modal instant (5 kredita sa Soniox tokom, 3 samo Canary), inače
   // standard (1 kredit, noćni bulk). Nepoznata vrijednost bilo kojeg izbora → 400, ne tihi default.
   const priority = body.tier === 'priority' ? 1 : 0;
   const choice = parseChoices(body);
   if ('error' in choice) return c.json({ error: choice.error }, 400);
   const transcription = body.transcription == null ? DEFAULT_TRANSCRIPTION : parseTranscription(body.transcription);
-  if (!transcription) return c.json({ error: "transcription mora biti 'speechmatics' ili 'canary'" }, 400);
+  if (!transcription) return c.json({ error: "transcription mora biti 'soniox' ili 'canary'" }, 400);
   const cost = priority ? priorityCost(transcription) : STANDARD_COST;
   const title = cleanTitle(body.title ?? '', body.url || body.youtube_id || '');
 
@@ -180,7 +180,7 @@ publicApi.post('/jobs', async (c) => {
 });
 
 // "Forsiraj sada": digni vlastiti queued standard job na prioritet. Naplati razliku
-// prioritet − standard (5−1=4 sa Speechmatics, 3−1=2 samo Canary).
+// prioritet − standard (5−1=4 sa Soniox tokom, 3−1=2 samo Canary).
 publicApi.post('/jobs/:id/prioritize', async (c) => {
   const key = c.get('apiKey');
   const job = await getJob(c.env.DB, c.req.param('id'));
@@ -266,14 +266,14 @@ publicApi.post('/jobs/:id/reprocess', async (c) => {
   }
   if (job.state !== 'done') return c.json({ error: 'Ponovna obrada je moguća tek kad je video gotov (done).' }, 409);
   const body = (await c.req.json().catch(() => ({}))) as {
-    transcription?: string; // 'none' | 'speechmatics' (default) | 'canary'
+    transcription?: string; // 'none' | 'soniox' (default) | 'canary'; 'speechmatics' = zastarjeli alias
     article_mode?: string; // 'new' (default) | 'keep' — 'keep' samo uz transcription='none'
     article_model?: string;
     with_magisterium?: boolean;
     magisterium_model?: string;
   };
   const transcription = body.transcription == null ? DEFAULT_TRANSCRIPTION : parseTranscription(body.transcription, true);
-  if (!transcription) return c.json({ error: "transcription mora biti 'none', 'speechmatics' ili 'canary'" }, 400);
+  if (!transcription) return c.json({ error: "transcription mora biti 'none', 'soniox' ili 'canary'" }, 400);
   const choice = parseChoices(body);
   if ('error' in choice) return c.json({ error: choice.error }, 400);
   const redoArticle = reprocessRedoArticle(transcription, body.article_mode);

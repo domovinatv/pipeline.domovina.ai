@@ -21,7 +21,7 @@
  *   node bridge/enqueue_playlist.js <playlist-url> [opcije]
  *   --dry-run               samo ispiši popis, ništa ne šalji
  *   --priority              ⚡ prioritetna obrada odmah (default: standardni noćni batch)
- *   --transcription X       speechmatics | canary (default: speechmatics)
+ *   --transcription X       soniox | canary (default: soniox; 'speechmatics' = zastarjeli alias)
  *   --article-model X       npr. claude:opus, claude:sonnet, vertex (default: claude:opus)
  *   --magisterium-model X   opus | sonnet | haiku (default: opus)
  *   --no-magisterium        bez Magisterium koraka (8.5)

@@ -32,8 +32,8 @@ test('običan prioritetni job s Canaryjem: bit-identično dosadašnjem pozivu', 
 
 const CLOUD = ['--with-soniox', '--with-pyannote-ai', '--gemini-refine-promote'];
 
-test("'speechmatics' (default Workera) → Soniox + pyannoteAI + Gemini sluh, kao nightly", () => {
-  const p = planFor({ ...base, transcription: 'speechmatics' }, ALL);
+test("'soniox' (default Workera) → Soniox + pyannoteAI + Gemini sluh, kao nightly", () => {
+  const p = planFor({ ...base, transcription: 'soniox' }, ALL);
   assert.equal(p.error, null);
   assert.ok(has(p.args, ...CLOUD));
   // Modal Canary + lokalni pyannote ostaju kao osigurač (isto kao nightly).

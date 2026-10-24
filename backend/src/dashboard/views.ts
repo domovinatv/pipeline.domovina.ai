@@ -149,7 +149,7 @@ function kredita(n){ return n+' '+(n===1?'kredit':'kredita'); }
 function trSel(){ var s=document.getElementById('transcription'); return s ? s.value : MODELS.defaults.transcription; }
 function paintCosts(){
   document.getElementById('cost-std').textContent = kredita(COSTS.standard);
-  document.getElementById('cost-prio').textContent = kredita(COSTS.priority[trSel()]||COSTS.priority.speechmatics);
+  document.getElementById('cost-prio').textContent = kredita(COSTS.priority[trSel()]||COSTS.priority.soniox);
 }
 function creditsStat(){
   return '<div class="stat '+(credits>0?'s-done':'s-failed')+'"><div class="label">Preostali krediti</div><div class="value">'+credits+'</div></div>';
@@ -160,7 +160,7 @@ function pbtn(cls, attrs, label, title){ return '<button class="act '+cls+'" '+a
 function actions(j){
   var b = [];
   if (j.state==='queued' && !j.priority) {
-    var up = (COSTS.priority[j.transcription]||COSTS.priority.speechmatics) - (j.credit_cost||COSTS.standard);
+    var up = (COSTS.priority[j.transcription]||COSTS.priority.soniox) - (j.credit_cost||COSTS.standard);
     b.push(pbtn('a-prioritize', 'data-prio="'+esc(j.id)+'"', '⚡ Forsiraj sada', 'Obradi odmah preko Modala — naplati razliku ('+kredita(up)+')'));
   }
   if (j.state==='done' && j.source!=='import') b.push(pbtn('a-requeue', 'data-rp="'+esc(j.id)+'"', '🔁 Ponovna obrada', 'Podigni epizodu na razinu nove: prijepis, članak, Magisterium — po izboru'));
@@ -211,7 +211,7 @@ var rpJob = null, rpDlg = document.getElementById('rpdlg'), rpForm = document.ge
 var rpUpd = wireReprocess(rpForm);
 function rpCost(){
   var t = rpForm.querySelector('input[name=transcription]:checked');
-  return COSTS.priority[t ? t.value : 'speechmatics'];
+  return COSTS.priority[t ? t.value : 'soniox'];
 }
 function paintRpCost(){ document.getElementById('rp-submit').textContent = '🔁 Pokreni ponovnu obradu — '+kredita(rpCost()); }
 rpForm.addEventListener('change', paintRpCost);

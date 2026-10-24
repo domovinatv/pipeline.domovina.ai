@@ -67,7 +67,7 @@ export function renderJobChoiceFields(): string {
       <label for="transcription">Transkripcija</label>
       <select id="transcription" name="transcription">${transcriptionOptions(DEFAULT_TRANSCRIPTION)}</select>
       <div class="modelhint" id="transcription_hint"></div>
-      <div class="modelhint warn">⚠ Vrijedi samo za <strong>⚡ prioritetne</strong> jobove. Standardni idu kroz noćni <em>batch</em>, koji svjež priljev ionako vrti kroz Speechmatics + Gemini sluh.</div>
+      <div class="modelhint warn">⚠ Vrijedi samo za <strong>⚡ prioritetne</strong> jobove. Standardni idu kroz noćni <em>batch</em>, koji svjež priljev ionako vrti kroz Soniox + pyannoteAI + Gemini sluh.</div>
     </div>
     <div class="field">
       <input type="hidden" name="mag_present" value="1">
@@ -213,7 +213,7 @@ function reprocessBadge(j){
 function transcriptionBadge(j){
   if (!j.priority || !j.transcription || j.transcription==='none') return '';
   var sm = j.transcription === 'speechmatics';
-  return ' <span class="pill model" title="'+(sm?'Speechmatics + Gemini sluh (kao nightly) → i words.json':'Samo Modal Canary + pyannote (jeftino, bez words.json)')+'">🎙 '+esc(TRANSCRIPTION_SHORT[j.transcription]||j.transcription)+'</span>';
+  return ' <span class="pill model" title="'+(sm?'Cloud ASR + Gemini sluh (kao nightly; od 24.10.2026. Soniox + pyannoteAI) → i words.json':'Samo Modal Canary + pyannote (jeftino, bez words.json)')+'">🎙 '+esc(TRANSCRIPTION_SHORT[j.transcription]||j.transcription)+'</span>';
 }
 function priorityBadge(j){
   return j.priority ? ' <span class="pill prio" title="Prioritetna obrada (Modal, odmah)">⚡ Prioritet</span>' : '';

@@ -146,9 +146,12 @@ export function parseMagisteriumModel(value: string | null | undefined): Magiste
 
 // ───────────────────────── Izbor transkripcije ─────────────────────────
 // Vrijedi za PRIORITETNI fast-path (priority_poller.js → run_pipeline.sh). Standardni jobovi
-// idu kroz nightly batch, koji ima vlastitu globalnu konfiguraciju (danas Speechmatics + sluh
-// za svjež priljev), pa ovo polje na njih nema utjecaja.
-//   speechmatics — kao nightly: Speechmatics kostur (2.7) + Gemini sluh (2.8, promote) uz
+// idu kroz nightly batch, koji ima vlastitu globalnu konfiguraciju (od 24.10.2026. Soniox +
+// pyannoteAI + sluh za svjež priljev), pa ovo polje na njih nema utjecaja.
+//   speechmatics — „premium cloud tok kao nightly". Ime je POVIJESNO i namjerno ostaje (ugovor
+//                  s /api/v1 klijentima, D1 redovi, priorityCost): bridge/plan.js ga od
+//                  24.10.2026. mapira na Soniox tekst (2.7b) + pyannoteAI govornike (2.7c) +
+//                  Gemini sluh (2.8, promote); Speechmatics je fallback unutar 2.7b. Uz to
 //                  Modal Canary; rezultat ima i words.json (titl riječ po riječ).
 //   canary       — samo Modal Canary + pyannote. Jeftino, bez words.json.
 export const TRANSCRIPTIONS = ['speechmatics', 'canary'] as const;
@@ -164,9 +167,10 @@ export interface TranscriptionOption {
 export const TRANSCRIPTION_OPTIONS: TranscriptionOption[] = [
   {
     value: 'speechmatics',
-    label: 'Speechmatics + Gemini sluh (kao nightly) — default',
-    short: 'Speechmatics',
-    hint: 'Speechmatics kostur (tko/kada) + Gemini 3.8 Flash čuje zvuk i piše tekst; uz to i Modal Canary. Daje words.json (titl riječ po riječ). ~$2-2.5 po epizodi.',
+    label: 'Soniox + pyannoteAI + Gemini sluh (kao nightly) — default',
+    // Neutralno: badge se prikazuje i na starim jobovima koji su stvarno išli Speechmaticsom.
+    short: 'Cloud',
+    hint: 'Soniox tekst + pyannoteAI govornici (tko/kada) + Gemini 3.8 Flash čuje zvuk i piše tekst; Speechmatics je rezerva kad Soniox padne, uz to i Modal Canary. Daje words.json (titl riječ po riječ). ~$0.4-0.7 po epizodi od 45 min.',
   },
   {
     value: 'canary',
@@ -198,8 +202,10 @@ export function reprocessRedoArticle(transcription: string, articleMode: string 
 }
 
 // ───────────────────────── Krediti (API ključevi) ─────────────────────────
-// Speechmatics + Gemini sluh košta ~$2-2.5/ep naspram ~$0.01 za Canary, pa prioritetni job
-// s njim rezervira 2 kredita više. Standardni job ide kroz nightly (globalna konfiguracija)
+// Cloud tok ('speechmatics') košta naspram ~$0.01 za Canary više, pa prioritetni job s njim
+// rezervira 2 kredita više. (Uz Speechmatics je bilo ~$2-2.5/ep; od 24.10.2026. Soniox +
+// pyannoteAI + sluh ≈ $0.4-0.7/ep — cijena u kreditima NAMJERNO nije dirana, to je
+// poslovna odluka, ne posljedica promjene ASR-a.) Standardni job ide kroz nightly (globalna konfiguracija)
 // pa za njega izbor transkripcije ne mijenja cijenu. Ponovna obrada je uvijek prioritetna;
 // bez novog prijepisa ('none') košta kao Canary.
 export const STANDARD_COST = 1;

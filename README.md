@@ -58,7 +58,9 @@ Link `/dashboard?auth=pdk_…` se jednom provjeri, ključ se spremi u HttpOnly k
 
 Dashboard ima **sve izbore kao admin** (odluka 2026-10-10: ključeve dobivaju samo poznati
 ljudi; kontrola je revoke ključa i badge 🔑 u adminu koji pokazuje tko je što predao).
-Default je maksimalna kvaliteta: Speechmatics + Gemini sluh, Claude Opus članak,
+Default je maksimalna kvaliteta: cloud ASR + Gemini sluh (`transcription='speechmatics'` —
+ime je povijesno; od 24.10.2026. bridge ga vrti kao nightly: Soniox + pyannoteAI + sluh,
+Speechmatics samo kao rezerva), Claude Opus članak,
 Magisterium s Opusom. Retke, korake, tokene i datoteke gradi isti klijentski kod kao
 admin (`backend/src/ui/client.ts`).
 

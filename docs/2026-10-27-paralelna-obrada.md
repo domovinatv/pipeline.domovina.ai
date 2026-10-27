@@ -21,7 +21,11 @@ Pitanje: koji su lockovi stvarno potrebni i kako pustiti više videa istovremeno
   Plist ima `AbandonProcessGroup`; worker je i u vlastitoj sesiji (`perl POSIX::setsid`). Nightly
   nakon globalnog locka čeka žive slotove i objavu (`NIGHTLY_SLOT_WAIT_S`, 3 h).
 - Na dan uvođenja disk je bio 98 % pun (11–12 GB slobodno) → radi samo slot 1 dok se ne oslobodi
-  ≥25 GB. Faza D (Magisterium EN zasebna traka) nije rađena.
+  ≥25 GB.
+- **D** (isti dan, v0.21.4): EN traka — launchd `tv.domovina.fetch.magisterium-en` (120 s, `MAG_LANE=en`),
+  lock `.magisterium-en.lock.d`, log `magisterium-en_*.log`; postojeći posao je HR traka (`MAG_LANE=hr`
+  default, jedini radi backfill enqueue). Backend claim ne daje EN dok je HR istog videa
+  `queued`/`running`.
 
 ## 1. Što je postojalo prije (analiza)
 

@@ -741,9 +741,15 @@ export async function claimMagisteriumJobs(
   lang?: 'hr' | 'en',
 ): Promise<MagisteriumJobRow[]> {
   const n = Math.min(Math.max(max, 1), 10);
+  // EN ima svoju traku (v0.21.4, bridge MAG_LANE=en) i ide paralelno s HR-om — ali EN je
+  // prijevod HR Magisteriuma, pa ga ne dajemo dok je HR istog videa u redu ili u obradi.
+  const hrPending =
+    lang === 'en'
+      ? ` AND NOT EXISTS (SELECT 1 FROM magisterium_jobs h WHERE h.youtube_id = magisterium_jobs.youtube_id AND h.lang = 'hr' AND h.state IN ('queued','running'))`
+      : '';
   const candidates = await db
     .prepare(
-      `SELECT ${MAG_COLS} FROM magisterium_jobs WHERE state='queued'${lang ? ' AND lang=?' : ''} ORDER BY created_at ASC LIMIT ?`,
+      `SELECT ${MAG_COLS} FROM magisterium_jobs WHERE state='queued'${lang ? ' AND lang=?' : ''}${hrPending} ORDER BY created_at ASC LIMIT ?`,
     )
     .bind(...(lang ? [lang, n] : [n]))
     .all<MagisteriumJobRow>();

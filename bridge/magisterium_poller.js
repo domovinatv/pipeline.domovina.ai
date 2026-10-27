@@ -62,6 +62,7 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'opus';
 // a vrijednost dolazi iz baze (drugi servis) — ne vjerujemo joj na slijepo.
 const ALLOWED_MODELS = ['opus', 'sonnet', 'haiku'];
 const MAG_MAX = parseInt(process.env.MAG_MAX || '2', 10);
+const MAG_LANE = process.env.MAG_LANE || 'all';   // hr | en | all
 const MAG_RUNNER = process.env.MAG_RUNNER || 'direct';
 const RUN_TIMEOUT_MS = parseInt(process.env.MAG_RUN_TIMEOUT_MS || '3600000', 10);
 const EN_TIMEOUT_MAX_MS = parseInt(process.env.MAG_EN_TIMEOUT_MAX_MS || String(4 * 3600000), 10);
@@ -291,10 +292,13 @@ function runDirect(youtubeId, force) {
     return console.log(`⏸️  Claude prozor: ${claudeWindowReason()} — preskačem tick.`);
   }
 
-  // HR prvi (MCP, ~15 min). EN (prijevod, i preko sat vremena) tek kad HR reda nema — jedan po
-  // ticku, da HR zahtjevi ne čekaju iza njega (21.10. dva HR-a stajala su iza EN-a).
-  let { jobs } = await api('POST', '/api/magisterium/claim', { max: MAG_MAX, lang: 'hr' });
-  if (!jobs.length) ({ jobs } = await api('POST', '/api/magisterium/claim', { max: 1, lang: 'en' }));
+  // Trake (27.10.): MAG_LANE=hr → samo HR (MCP, rate limit 15/min), MAG_LANE=en → samo EN
+  // (Gemini prijevod, bez Magisterium API-ja) — svaka ima svoj launchd posao i lock, pa EN više
+  // ne čeka iza dugog HR runa ni obrnuto. Bez MAG_LANE stari redoslijed: HR prvi, EN tek kad
+  // HR reda nema (21.10. dva HR-a stajala su iza EN-a).
+  let jobs = [];
+  if (MAG_LANE !== 'en') ({ jobs } = await api('POST', '/api/magisterium/claim', { max: MAG_MAX, lang: 'hr' }));
+  if (!jobs.length && MAG_LANE !== 'hr') ({ jobs } = await api('POST', '/api/magisterium/claim', { max: 1, lang: 'en' }));
   if (!jobs.length) return console.log('📭 Nema Magisterium zahtjeva.');
   console.log(`🕊 Claimano ${jobs.length} Magisterium zahtjeva.`);
 

@@ -28,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.21.2';
+export const APP_VERSION = 'v0.21.3';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -736,17 +736,20 @@ function btn(id,action,label,title){ return '<button class="act a-'+action+'" da
 //  - ne-done  → toggle NAMJERE (utječe na status "čeka" vs "preskočeno" + cron auto-enqueue)
 //  - done     → one-click POKRETANJE (re)obrade HR/EN (bridge poller pokupi zahtjev); dok je
 //               zahtjev queued/running gumb se sakrije (badge u meta čeliji pokazuje stanje).
+//  - ne-done, a Magisterium je već jednom tražen → članak postoji (npr. job zapeo u
+//               processing nakon ponovne obrade), pa uz toggle nudi i pokretanje HR/EN.
 function magActions(j){
   var b = [];
-  if (j.state==='done') {
+  if (j.state!=='done') {
+    b.push(j.with_magisterium
+      ? btn(j.id,'mag-off','🕊 Mag ✓','Magisterium UKLJUČEN za ovaj video — klik za isključi')
+      : btn(j.id,'mag-on','🕊 Mag ✗','Magisterium ISKLJUČEN za ovaj video — klik za uključi'));
+  }
+  if (j.state==='done' || j.mag_hr_state || j.mag_en_state) {
     var hrBusy = j.mag_hr_state==='queued' || j.mag_hr_state==='running';
     var enBusy = j.mag_en_state==='queued' || j.mag_en_state==='running';
     if (!hrBusy) b.push(btn(j.id,'magisterium-hr','🕊 Mag HR', j.mag_hr_state==='done'?'Ponovno obradi Magisterium HR':'Pokreni Magisterium HR obradu'));
     if (!enBusy) b.push(btn(j.id,'magisterium-en','🕊 Mag EN', j.mag_en_state==='done'?'Ponovno obradi Magisterium EN overlay':'Pokreni Magisterium EN overlay'));
-  } else {
-    b.push(j.with_magisterium
-      ? btn(j.id,'mag-off','🕊 Mag ✓','Magisterium UKLJUČEN za ovaj video — klik za isključi')
-      : btn(j.id,'mag-on','🕊 Mag ✗','Magisterium ISKLJUČEN za ovaj video — klik za uključi'));
   }
   return b;
 }

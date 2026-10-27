@@ -4,8 +4,8 @@
  *
  * Za jobove u 'fetching'/'transcribing'/'processing' provjeri je li obrada gotova
  * i javi status natrag pipeline.domovina.ai-u:
- *   • CDN data/{id}/article.json → 200 i NOVIJI od joba  ⇒  done + detail_url (live na /v/{id})
- *     (stari članak kod ponovne obrade NE zatvara job — vidi articleLive)
+ *   • CDN data/{id}/article.json → 200  ⇒  done + detail_url (live na /v/{id}); kod ponovne
+ *     obrade (reprocess=1) mora biti i NOVIJI od claima — stari članak je ne zatvara (articleLive)
  *   • lokalno {id}.canary.diarized.srt postoji, ali članak još ne na CDN-u ⇒ processing
  *   • inače ostaje transcribing (čeka Colab Canary)
  *
@@ -83,6 +83,11 @@ async function articleLive(job) {
     headers: { Range: 'bytes=0-0' },
   });
   if (!r.ok && r.status !== 206) return false;
+  // Svježina vrijedi SAMO za ponovnu obradu: tamo stari članak na CDN-u nije signal uspjeha.
+  // Običan job koji je ponovno claiman (sweep ga vratio u queued, pa novi claimed_at) a run
+  // ništa nije promijenio jer je članak već bio gotov, inače zauvijek ostane u processing
+  // (nuNw4qWs0r4: claim 24.10., članak 21.10., ~3000 ticka "ostaje processing" do 27.10.).
+  if (job.reprocess !== 1) return true;
   const lm = Date.parse(r.headers.get('last-modified') || '');
   if (!Number.isFinite(lm)) return false;
   return Math.floor(lm / 1000) >= (job.claimed_at || job.created_at || 0);

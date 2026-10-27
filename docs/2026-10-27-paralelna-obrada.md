@@ -151,3 +151,41 @@ odmah u istom ticku nakon HR claima.
 
 A → B → C, svaki korak zaseban commit i jedan dan promatranja. A sam rješava današnji
 simptom (Magisterium/reels čekaju prioritetni run). C ima smisla tek nakon B.
+
+## 6. Isti dan, nakon uvođenja
+
+**E-knjige nakon Magisteriuma.** Regeneracija `book.epub` / `book.en.epub` bila je samo u Claude
+runbooku (`fetch.domovina.tv/docs/MAGISTERIUM_MCP_RUN.md` korak 7). Prelaskom HR-a i EN-a na
+izravni put (21.–27.10.) se izgubila, pa EN izdanja nije bilo. Sad je u `publish_hr_episode.sh`
+i u EN objavi `magisterium_poller.js`:
+
+1. `generate_ebook.js --video-id ID --force` **prije** per-video uploada. `--force` jer knjiga s HR
+   prosudbom kao fallbackom već ima `magisterium.xhtml`, pa je heuristika ne smatra zastarjelom.
+2. per-video `upload_to_r2.js` šalje **novu** knjigu. `force_upload_epubs.js --changed-only` šalje
+   samo knjige koje su već na R2, pa novu `book.en.epub` nikad ne bi poslao.
+3. `force_upload_epubs.js --changed-only` šalje promijenjenu HR knjigu, zatim
+   `build_episode_bundle.js --video-id`.
+
+Ručno nadoknađeno: nuNw4qWs0r4, kmVTa8OjHpc, A-oDNz3nvdQ, nBPDxzrAW0Q. Is7ZDbWCu0k je namjerno
+preskočen: njegov `.article.en.json` je od članka 07-08 (Gemini), a najnoviji članak 07-31 (Opus)
+nema EN.
+
+**Lažni `failed` nakon EN objave** (kmVT, nBPD): poller provjeri artefakt i prije runa, dobije
+404, a Cloudflare taj 404 zapamti za točan URL. Provjera nakon objave sad uvijek ima `?x=` i tri
+pokušaja (0 / 10 / 30 s).
+
+**Zapeli `processing`** (nuNw4qWs0r4, 24.–27.10.): uzrok NIJE `redo_article`, nego `reconcile.js`.
+Tražio je da članak bude noviji od `claimed_at` za svaki job. Ponovno claiman običan job dobije
+novi `claimed_at`, a run ništa ne promijeni jer je članak već gotov. Uvjet sad vrijedi samo za
+`reprocess=1`.
+
+### Otvoreno
+
+- Disk Mac Minija na 97–98 % (11–15 GB slobodno). Slot 2 se otvara tek od 25 GB.
+- Pravi paralelni run (2 prioritetna videa, ili HR i EN Magisterium istovremeno) još nije viđen
+  u produkciji; testirano samo u sandboxu.
+- HR `book.epub` za nuNw je na disku manji nego na CDN-u, pa ga zaštita u `force_upload_epubs`
+  nije poslala. Uzrok nije istražen (sumnja: drugačiji skup screenshotova).
+- `uninstall.sh` ne zna za Magisterium poslove; stare jednokratne skripte (`finish_backfill_*`,
+  `verify_*`) drže globalni lock, pa bi objava koju pozovu čekala do isteka roka.
+- Poller u logu još piše „objava pod pipeline lockom" (samo tekst).

@@ -115,9 +115,12 @@ function artifactName(lang) {
 // Postoji li artefakt? GET s Range bytes=0-0 (ne HEAD — Cloudflare cache-ira 404 po točnom URL-u).
 // Uz `since` (unix s) vrijedi samo artefakt objavljen NAKON toga (Last-Modified) — za force
 // zahtjeve (ponovna obrada), gdje stari Magisterium na CDN-u nije signal uspjeha.
+// Uvijek s cache-busterom: provjera PRIJE runa (idempotentnost) dobije 404 koji Cloudflare
+// zapamti za točan URL, pa je provjera NAKON objave bez ?x vidjela taj 404 i javila failed
+// iako je artefakt bio na R2 (kmVT EN i nBPD EN, 27.10.).
 async function artifactExists(youtubeId, lang, since = 0) {
   try {
-    const r = await fetch(`${CDN_BASE}/data/${youtubeId}/${artifactName(lang)}${since ? '?x=' + Date.now() : ''}`, {
+    const r = await fetch(`${CDN_BASE}/data/${youtubeId}/${artifactName(lang)}?x=${Date.now()}`, {
       method: 'GET',
       headers: { Range: 'bytes=0-0' },
     });
@@ -342,7 +345,13 @@ function runDirect(youtubeId, force) {
     }
 
     // 3) Verificiraj po CDN-u (izvor istine, ne exit kod). Za force: samo NOVIJI od claima.
-    if (await artifactExists(job.youtube_id, job.lang, since)) {
+    // Do 3 pokušaja (0 / 10 / 30 s): svježe uploadan ključ zna kasniti na rubu CDN-a.
+    let live = false;
+    for (const waitMs of [0, 10000, 30000]) {
+      if (waitMs) await new Promise((res) => setTimeout(res, waitMs));
+      if ((live = await artifactExists(job.youtube_id, job.lang, since))) break;
+    }
+    if (live) {
       await api('PATCH', `/api/magisterium/${job.id}`, { state: 'done' });
       console.log(`  ✅ ${artifactName(job.lang)} live na CDN-u → done`);
     } else {

@@ -187,7 +187,15 @@ async function runEnglish(job) {
   const upload = job.force
     ? `node force_upload.js --video-id ${id} --channel ${channel} --targets summary-en,article-en,magisterium-en`
     : `node upload_to_r2.js --input-dir storage/output --video-id ${id}`;
-  const script = `${channel ? `node generate_channel_index.js --channel ${channel} && ` : ''}${upload} && node upload_to_r2.js --meta-dir storage/meta`;
+  // E-knjiga: EN izdanje (book.en.epub) nastaje tek kad postoji .article.en.json, pa ga
+  // gradimo ovdje — bilo je u Claude runbooku (MAGISTERIUM_MCP_RUN.md korak 7) i izgubilo se
+  // prelaskom na izravni EN put (27.10.). PRIJE uploada: nova knjiga ide per-video uploadom
+  // (force_upload_epubs šalje samo već objavljene), promijenjena HR kroz --changed-only, pa
+  // bundle da episode.json zna za book.en.epub. --force: knjiga s HR prosudbom kao fallbackom
+  // ima magisterium.xhtml pa je heuristika ne bi smatrala zastarjelom. Ne-fatalno.
+  const ebook = `{ node generate_ebook.js --video-id ${id} --force || true; }`;
+  const ebookAfter = `{ node tools/force_upload_epubs.js --changed-only --video-id ${id}; node build_episode_bundle.js --video-id ${id}; true; }`;
+  const script = `${ebook} && ${channel ? `node generate_channel_index.js --channel ${channel} && ` : ''}${upload} && node upload_to_r2.js --meta-dir storage/meta && ${ebookAfter}`;
   console.log('  📤 objava pod pipeline lockom (channel index + R2)…');
   const pub = spawnSync(path.join(FETCH_REPO, 'automatic', 'with_pipeline_lock.sh'), ['bash', '-c', script], {
     cwd: FETCH_REPO,

@@ -41,7 +41,9 @@ const LLM_BACKENDS = ['vertex', 'cli', 'claude', 'agy'];
 // mogu još čekati u redu) i ide istim cloud tokom.
 // Sve osim eksplicitnog 'canary' ide cloud tokom: jeftini put mora biti izričit izbor,
 // a izostavljena vrijednost = default kao nightly.
-const CLOUD_FLOW_ARGS = ['--with-soniox', '--with-pyannote-ai', '--gemini-refine-promote'];
+// 28.10.2026.: bez Gemini sluha i Speechmaticsa, isto kao nightly — 2.8 samo promovira
+// Soniox+pyannoteAI kostur (fetch.domovina.tv docs/2026-10-28-bez-gemini-sluha-i-speechmaticsa.md).
+const CLOUD_FLOW_ARGS = ['--with-soniox', '--with-pyannote-ai', '--gemini-refine-promote', '--no-gemini-ear', '--no-speechmatics'];
 // run_pipeline.sh čita kostur za 2.8 iz env-a (default 'speechmatics' = stari put); 'auto'
 // po epizodi uzme prvi postojeći: soniox_pyannote → speechmatics_pyannote → speechmatics.
 // Env, ne CLI zastavica: točno ovako ga zove nightly (automatic/nightly_pipeline.sh), a

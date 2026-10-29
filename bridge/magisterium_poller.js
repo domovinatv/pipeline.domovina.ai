@@ -19,7 +19,8 @@
  *      24.10.2026. BEZ LLM-a: Magisterium MCP se zove izravno (OAuth Pro token), ~10 min za
  *      13 sekcija, 0 Claude kvote. Stari put (MAG_RUNNER=claude) ostaje kao fallback:
  *      claude -p "@docs/MAGISTERIUM_MCP_RUN.md <VID>".
- *      EN: BEZ Claudea — translate_to_english.js (Vertex Gemini) + objava pod pipeline lockom.
+ *      EN: BEZ Claudea — translate_to_english.js (agy Gemini, ~5 min/ep) + objava pod pipeline lockom.
+ *      Bez HR Magisteriuma EN je gotov kad je article.en.json na CDN-u.
  *   3) CDN verifikacija (GET, ne HEAD — CF cache-ira 404) → done | failed(+error).
  *
  * EN nije MCP nego strojni prijevod HR artefakata, a traje i preko sat vremena. Unutar
@@ -65,7 +66,7 @@ const MAG_MAX = parseInt(process.env.MAG_MAX || '2', 10);
 const MAG_LANE = process.env.MAG_LANE || 'all';   // hr | en | all
 const MAG_RUNNER = process.env.MAG_RUNNER || 'direct';
 const RUN_TIMEOUT_MS = parseInt(process.env.MAG_RUN_TIMEOUT_MS || '3600000', 10);
-const EN_TIMEOUT_MAX_MS = parseInt(process.env.MAG_EN_TIMEOUT_MAX_MS || String(4 * 3600000), 10);
+const EN_TIMEOUT_MAX_MS = parseInt(process.env.MAG_EN_TIMEOUT_MAX_MS || String(2 * 3600000), 10);
 // Objava čeka pipeline lock do 30 min (with_pipeline_lock.sh), pa sam upload.
 const PUBLISH_TIMEOUT_MS = 45 * 60000;
 
@@ -118,9 +119,9 @@ function artifactName(lang) {
 // Uvijek s cache-busterom: provjera PRIJE runa (idempotentnost) dobije 404 koji Cloudflare
 // zapamti za točan URL, pa je provjera NAKON objave bez ?x vidjela taj 404 i javila failed
 // iako je artefakt bio na R2 (kmVT EN i nBPD EN, 27.10.).
-async function artifactExists(youtubeId, lang, since = 0) {
+async function cdnHas(youtubeId, name, since = 0) {
   try {
-    const r = await fetch(`${CDN_BASE}/data/${youtubeId}/${artifactName(lang)}?x=${Date.now()}`, {
+    const r = await fetch(`${CDN_BASE}/data/${youtubeId}/${name}?x=${Date.now()}`, {
       method: 'GET',
       headers: { Range: 'bytes=0-0' },
     });
@@ -131,6 +132,16 @@ async function artifactExists(youtubeId, lang, since = 0) {
   } catch {
     return false;
   }
+}
+
+// EN bez HR Magisteriuma (od 29.10. EN ide za SVE nove epizode, i za kanale bez Magisteriuma):
+// tada je EN gotov kad je article.en.json na CDN-u. Prije je takav job uvijek završio `failed`
+// jer je čekao article.magisterium.en.json koji ne može nastati.
+async function artifactExists(youtubeId, lang, since = 0) {
+  if (lang !== 'en') return cdnHas(youtubeId, artifactName(lang), since);
+  if (await cdnHas(youtubeId, artifactName(lang), since)) return true;
+  if (await cdnHas(youtubeId, artifactName('hr'))) return false;
+  return cdnHas(youtubeId, 'article.en.json', since);
 }
 
 // ─── EN PRIJEVOD (bez Claudea) ─────────────────────────────────────────────────
@@ -145,10 +156,11 @@ async function episodeInfo(youtubeId) {
   }
 }
 
-// Izmjereno 21.10.: sam sažetak 15 min uz Vertex 429 (umjesto ~3 min iz mjerenja 29.08.), pa
-// rok ima veliku rezervu. EN se ionako claima samo kad HR reda nema.
+// Od 29.10. EN ide kroz agy, jedan poziv po dokumentu: epizoda s 42 sekcije ~5 min (prije
+// 3 h 41 min). Rok pokriva fallback po iteraciji (~3-5 min po iteraciji) s rezervom, a ne
+// stari put po sekciji — zaglavljeni job inače drži EN red satima.
 function enTimeoutMs(sections) {
-  const min = 30 + 5 * (Number.isFinite(sections) && sections > 0 ? sections : 20);
+  const min = 30 + (Number.isFinite(sections) && sections > 0 ? sections : 20);
   return Math.min(Math.max(min * 60000, RUN_TIMEOUT_MS), EN_TIMEOUT_MAX_MS);
 }
 
@@ -177,7 +189,7 @@ async function runEnglish(job) {
 
   const timeout = enTimeoutMs(ep && ep.article_sections);
   const chArgs = channel ? ['--channel', channel] : [];
-  console.log(`  🌐 EN prijevod (Vertex Gemini, bez Claudea)${channel ? ' · ' + channel : ''} · ${ep && ep.article_sections ? ep.article_sections + ' sekcija · ' : ''}rok ${Math.round(timeout / 60000)} min`);
+  console.log(`  🌐 EN prijevod (agy Gemini, bez Claudea)${channel ? ' · ' + channel : ''} · ${ep && ep.article_sections ? ep.article_sections + ' sekcija · ' : ''}rok ${Math.round(timeout / 60000)} min`);
   const tr = spawnSync('node', ['translate_to_english.js', '--input-dir', 'storage/output', ...chArgs, '--video-id', id], {
     cwd: FETCH_REPO,
     stdio: 'inherit',
@@ -357,7 +369,7 @@ function runDirect(youtubeId, force) {
     } else {
       await api('PATCH', `/api/magisterium/${job.id}`, {
         state: 'failed',
-        error: `run završio, ali ${artifactName(job.lang)} nije na CDN-u (provjeri ${MAG_RUNNER === 'direct' ? 'magisterium_mcp_episode.js / MCP token' : 'Claude CLI/MCP'} izlaz)`,
+        error: `run završio, ali ${job.lang === 'en' ? 'EN artefakt (article.magisterium.en.json ili, bez HR Magisteriuma, article.en.json)' : artifactName(job.lang)} nije na CDN-u (provjeri ${MAG_RUNNER === 'direct' ? 'magisterium_mcp_episode.js / MCP token' : 'Claude CLI/MCP'} izlaz)`,
       });
       console.log(`  ❌ nema artefakta nakon runa → failed`);
     }

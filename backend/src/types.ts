@@ -64,14 +64,19 @@ export interface ArticleModelOption {
 // → članak bi se uredno generirao, spremio i NIKAD servirao. Dok se to ne popravi uzvodno
 // (slug koji sortira iznad `gemini-`), Fable se ne nudi u UI-u.
 export const ARTICLE_MODELS: ArticleModelOption[] = [
-  {
-    value: 'vertex',
-    backend: 'vertex',
-    model: null,
-    label: 'Gemini 3.8 Flash (Vertex) — jeftina opcija',
-    short: 'Gemini 3.8 Flash',
-    hint: 'Bivši default (do 2026-07-29). Model čita fetch.domovina.tv/gemini.conf (GEMINI_MODEL). Jeftino, ide na GCP kredite; sklonije halucinaciji imena govornika.',
-  },
+  // ⚠️ DEPRECATED (29.10.2026.) — Vertex AI se više ne koristi nigdje (fetch.domovina.tv
+  // lib/vertex_auth.js) i ne nudi se u UI-u. Ostaje u sourceu kao zapis, ne brisati. Obično LLM
+  // zaključivanje je ograničeno izlaznim tokenima; agy/Claude Code su asistenti koji sami spoje
+  // 1..M poziva u upotrebljiv JSON. 'vertex' ostaje u LLM_BACKENDS jer ga nose stari retci u
+  // bazi; bridge za njih ne šalje zastavicu pa run_pipeline.sh ide na default (claude).
+  // {
+  //   value: 'vertex',
+  //   backend: 'vertex',
+  //   model: null,
+  //   label: 'Gemini 3.8 Flash (Vertex) — jeftina opcija',
+  //   short: 'Gemini 3.8 Flash',
+  //   hint: 'Bivši default (do 2026-07-29). Model čita fetch.domovina.tv/gemini.conf (GEMINI_MODEL). Jeftino, ide na GCP kredite; sklonije halucinaciji imena govornika.',
+  // },
   {
     value: 'claude:opus',
     backend: 'claude',
@@ -102,13 +107,13 @@ export const ARTICLE_MODELS: ArticleModelOption[] = [
     model: null,
     label: 'Gemini CLI (fallback)',
     short: 'Gemini CLI',
-    hint: 'Kad Vertex zapinje (429/403) — koristi user-level google login.',
+    hint: 'gemini CLI, user-level google login (bivši fallback kad je Vertex zapinjao).',
   },
 ];
 
 // Default od 2026-07-29: Claude Opus (premium output za trajni statični sadržaj;
 // odluka nakon incidenta atribucije imena kod Gemini Flasha — Ivan Voras / cb4CsFDCDho).
-// Vertex ostaje dostupan kao jeftina opcija po videu.
+// Vertex je bio jeftina opcija po videu do 29.10.2026. (DEPRECATED, vidi gore).
 export const DEFAULT_ARTICLE_MODEL = 'claude:opus';
 
 // Razriješi vrijednost iz forme/API-ja u (backend, model). Vrati null za nepoznatu

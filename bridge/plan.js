@@ -71,7 +71,8 @@ const FLOW_LABELS = {
  */
 function planFor(job, caps) {
   const isX = typeof job.source === 'string' && job.source.startsWith('x');
-  // Nepoznat/izostavljen backend → 'vertex' (dosadašnje ponašanje).
+  // Nepoznat/izostavljen backend → 'vertex' = bez zastavice, pa run_pipeline.sh ide na svoj
+  // default (claude). Sam Vertex je DEPRECATED od 29.10.2026. i skripte ga odbijaju.
   const backend = LLM_BACKENDS.includes(job.llm_backend) ? job.llm_backend : 'vertex';
   const backendArgs = backend !== 'vertex' ? ['--gemini-backend', backend] : [];
   // CLAUDE_MODEL čitaju summarize_gemini.js i generate_article_gemini.js (env > gemini.conf >

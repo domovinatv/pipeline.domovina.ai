@@ -119,7 +119,7 @@ test('ponovna obrada: tuđi job 404, uvezena epizoda 403, nedovršen 409', async
 
 test('promjena modela članka na gotovom jobu → 409; Magisterium model prolazi', async () => {
   const { db, calls } = fakeDb(doneJob);
-  assert.equal((await post(db, '/jobs/j1/llm-model', { value: 'vertex' })).status, 409);
+  assert.equal((await post(db, '/jobs/j1/llm-model', { value: 'claude:sonnet' })).status, 409);
   assert.equal((await post(db, '/jobs/j1/mag-model', { value: 'sonnet' })).status, 200);
   assert.ok(calls.some((c) => c.sql.includes('magisterium_model') && c.sql.startsWith('UPDATE')));
 });

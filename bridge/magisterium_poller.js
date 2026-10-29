@@ -157,8 +157,8 @@ async function episodeInfo(youtubeId) {
 }
 
 // Od 29.10. EN ide kroz agy, jedan poziv po dokumentu: epizoda s 42 sekcije ~5 min (prije
-// 3 h 41 min). Rok pokriva fallback po iteraciji (~3-5 min po iteraciji) s rezervom, a ne
-// stari put po sekciji — zaglavljeni job inače drži EN red satima.
+// 3 h 41 min). Nema fallbacka na manje blokove (neuspjeh = failed, enqueue ponovi nakon grace
+// roka), pa je rok samo rezerva za spori agy — zaglavljeni job inače drži EN red satima.
 function enTimeoutMs(sections) {
   const min = 30 + (Number.isFinite(sections) && sections > 0 ? sections : 20);
   return Math.min(Math.max(min * 60000, RUN_TIMEOUT_MS), EN_TIMEOUT_MAX_MS);

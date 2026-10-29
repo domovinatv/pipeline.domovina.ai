@@ -95,6 +95,25 @@ function downloaded(youtubeId) {
   }
 }
 
+// Ograda Claude prozora (fetch.domovina.tv lib/claude_window.js) odgađa korake 7+8 bez
+// greške: run prođe, ali članka nema. Ako ga nema, pitaj istog arbitra zašto — razlog ide u
+// admin (badge + gumb „▶ Članak ipak sada"). null = nije odgođen (članak postoji, ograda je
+// bila ugašena ili arbitar sada pušta, pa je uzrok nešto drugo).
+function llmDeferred(youtubeId, env) {
+  if (env.CLAUDE_WINDOW_GUARD !== '1') return null;
+  try {
+    const hasArticle = fs
+      .readdirSync(UNLISTED_DIR)
+      .some((f) => f.includes('_yt_' + youtubeId) && f.endsWith('.article.json'));
+    if (hasArticle) return null;
+  } catch {
+    return null;
+  }
+  const r = spawnSync(process.env.CLAUDE_WINDOW_BIN || 'claude-window', ['check'], { encoding: 'utf-8' });
+  if (r.status !== 10) return null;
+  return (r.stderr || '').replace(/^claude-window:\s*/, '').trim() || 'ograda Claude prozora';
+}
+
 function readMeta(youtubeId) {
   try {
     const f = fs
@@ -195,8 +214,10 @@ function writeBudget(b) {
       console.log('  📝 samo novi članak nad postojećim prijepisom');
       const r = spawnSync(RUN_PIPELINE, plan.args, { cwd: FETCH_REPO, stdio: 'inherit', env });
       // done stiže kroz reconcile kad NOVI article.json bude na CDN-u (isFreshFor).
+      const deferred = r.status === 0 ? llmDeferred(job.youtube_id, env) : null;
+      if (deferred) console.log(`  ⏸️  koraci 7+8 odgođeni: ${deferred}`);
       await api('PATCH', `/api/jobs/${job.id}`, r.status === 0
-        ? { state: 'processing' }
+        ? { state: 'processing', llm_deferred: deferred }
         : { state: 'failed', error: `run_pipeline.sh --reprocess-article izašao s ${r.status}` });
       continue;
     }
@@ -214,8 +235,10 @@ function writeBudget(b) {
       continue;
     }
     const meta = readMeta(job.youtube_id) || {};
-    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', ...meta });
+    const deferred = llmDeferred(job.youtube_id, env);
+    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', llm_deferred: deferred, ...meta });
     console.log(`  ✅ obrađeno (Modal) → transcribing${meta.channel ? ' (' + meta.channel + ')' : ''}`);
+    if (deferred) console.log(`  ⏸️  koraci 7+8 odgođeni: ${deferred} — admin: „▶ Članak ipak sada"`);
 
     // Auto-reuse za praćene kanale: ako video pripada nekoj automatic/podcasts listi
     // i kanal ga je već fetchao, prekopiraj ad-hoc artefakte u channel dir + reindex

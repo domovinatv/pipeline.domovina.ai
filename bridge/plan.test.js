@@ -130,3 +130,22 @@ test('ponovna obrada bez fetch --reprocess: greška PRIJE runa', () => {
   const p = planFor({ ...base, reprocess: 1 }, { replace: true, reprocess: false, reprocessArticle: true });
   assert.match(p.error, /--reprocess/);
 });
+
+test('„Članak ipak sada": isti run, ali bez ograde Claude prozora', () => {
+  const p = planFor({ ...base, llm_force: 1 }, ALL);
+  assert.equal(p.mode, 'pipeline');
+  assert.equal(p.env.CLAUDE_WINDOW_GUARD, '0');
+  assert.ok(has(p.args, '--unlisted-url', '--modal-only'));
+});
+
+test('bez llm_force ograda ostaje (env je ne dira)', () => {
+  assert.equal(planFor(base, ALL).env.CLAUDE_WINDOW_GUARD, undefined);
+});
+
+test('odgođena ponovna obrada: samo članak, bez novog plaćenog prijepisa', () => {
+  const p = planFor({ ...base, reprocess: 1, llm_force: 1 }, ALL);
+  assert.equal(p.mode, 'article-only');
+  assert.ok(p.args.includes('--reprocess-article'));
+  assert.ok(!p.args.includes('--reprocess'));
+  assert.equal(p.env.CLAUDE_WINDOW_GUARD, '0');
+});

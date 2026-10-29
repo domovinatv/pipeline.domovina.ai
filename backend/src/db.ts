@@ -12,7 +12,7 @@ import { DEFAULT_TRANSCRIPTION, EPISODE_STEPS } from './types';
 import { genApiKey, newId, nowSec, sha256Hex } from './util';
 
 const COLS =
-  'id, youtube_id, youtube_url, source_platform, source_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, with_magisterium, llm_backend, llm_model, magisterium_model, transcription, reprocess, redo_article, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
+  'id, youtube_id, youtube_url, source_platform, source_url, title, channel, duration_seconds, source, api_key_id, state, visibility, detail_url, error, attempts, price_cents, paid, priority, credit_cost, with_magisterium, llm_backend, llm_model, magisterium_model, transcription, reprocess, redo_article, llm_deferred, llm_force, created_at, updated_at, claimed_at, transcribe_backend, transcribe_claimed_at, done_at, deleted_at';
 
 export interface CreateJobInput {
   youtubeId: string;
@@ -329,6 +329,7 @@ export interface UpdateJobInput {
   title?: string | null;
   channel?: string | null;
   durationSeconds?: number | null;
+  llmDeferred?: string | null; // razlog odgode koraka 7+8 (ograda Claude prozora)
 }
 
 export async function updateJob(
@@ -344,6 +345,8 @@ export async function updateJob(
     if (input.state === 'done') {
       sets.push('done_at=?');
       binds.push(nowSec());
+      // Članak je stigao — odgoda i pristanak na nov prozor više ne vrijede.
+      sets.push('llm_deferred=NULL', 'llm_force=0');
     }
     // Terminalno stanje → transcribe lock više nema smisla; očisti ga da GET /claims
     // ostane čist i da stale-sweep nema što raditi. ('postponed' se može nastaviti → NE diraj.)
@@ -371,9 +374,29 @@ export async function updateJob(
     sets.push('duration_seconds=?');
     binds.push(input.durationSeconds);
   }
+  if (input.llmDeferred !== undefined) {
+    sets.push('llm_deferred=?');
+    binds.push(input.llmDeferred);
+  }
   binds.push(id);
   await db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id=?`).bind(...binds).run();
   return getJob(db, id);
+}
+
+// „Pokreni ipak sada": job čiji su koraci 7+8 odgođeni (ograda Claude prozora) vrati u
+// prioritetni red s llm_force=1 — bridge ga tada vrti bez ograde. Run je idempotentan, pa
+// fetch/transkripcija se preskoče i ostanu samo sažetak + članak + upload. Guard na
+// llm_deferred: ne diramo job koji upravo radi niti onaj koji nije odgođen.
+export async function forceLlmNow(db: D1Database, id: string): Promise<boolean> {
+  const ts = nowSec();
+  const res = await db
+    .prepare(
+      `UPDATE jobs SET state='queued', priority=MAX(priority, 1), llm_force=1, llm_deferred=NULL, error=NULL, updated_at=?
+       WHERE id=? AND llm_deferred IS NOT NULL AND state IN ('transcribing','processing') AND deleted_at IS NULL`,
+    )
+    .bind(ts, id)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
 }
 
 // Soft-delete: označi redak obrisanim (reverzibilno). Claim/dedup ga ignoriraju,

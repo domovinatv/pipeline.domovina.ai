@@ -78,9 +78,19 @@ function planFor(job, caps) {
   // CLAUDE_MODEL čitaju summarize_gemini.js i generate_article_gemini.js (env > gemini.conf >
   // 'opus'). Postavlja se SAMO za claude backend — inače je varijabla no-op, ali bi zbunjivala.
   const env = backend === 'claude' && job.llm_model ? { CLAUDE_MODEL: job.llm_model } : {};
+  // „▶ Članak ipak sada": admin je pristao otvoriti nov prozor Claude kvote, pa run ide
+  // BEZ ograde (priority_worker.sh postavlja CLAUDE_WINDOW_GUARD=1; plan.env ga pregazi).
+  if (job.llm_force === 1) env.CLAUDE_WINDOW_GUARD = '0';
   const reprocess = job.reprocess === 1;
   const flow = transcriptionFlow(job);
   const plan = { mode: 'pipeline', args: [], env, reuseArgs: null, error: null };
+
+  // Ponovna obrada kojoj je prvi prolaz odgodio članak: prijepis je već nov (i već na CDN-u
+  // preko 12.1), pa drugi prolaz s --reprocess bi ga sklonio i platio Soniox/pyannoteAI
+  // iznova. Dovoljan je novi članak nad postojećim prijepisom.
+  if (reprocess && job.llm_force === 1 && caps.reprocessArticle) {
+    return { ...plan, mode: 'article-only', args: ['--reprocess-article', job.youtube_id, ...backendArgs] };
+  }
 
   if (reprocess && flow === 'none') {
     if (job.redo_article === 0) return { ...plan, mode: 'none' };

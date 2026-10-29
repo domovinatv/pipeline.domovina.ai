@@ -345,6 +345,8 @@ button.act.a-postpone { color: #7C3AED; border-color: #E3D4FB; }
 button.act.a-postpone:hover { background: #F3E8FF; }
 button.act.a-requeue  { color: #1D4ED8; border-color: #CDDDF6; }
 button.act.a-requeue:hover  { background: #E7EEF8; }
+button.act.a-llm-now  { color: var(--warning); border-color: #F3D9B1; }
+button.act.a-llm-now:hover  { background: #FDF1E0; }
 button.act.a-delete   { color: #B42318; border-color: #F3C9C5; }
 button.act.a-delete:hover   { background: #F8E2E0; }
 button.act.a-restore  { color: #1D4ED8; border-color: #CDDDF6; }
@@ -762,6 +764,7 @@ function actions(j){
   }
   if (j.state==='queued') { if (!j.priority) b.push(btn(j.id,'prioritize','⚡ Prioritet','Sponzoriraj instant obradu (Modal) — besplatno, radi i za API jobove')); b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed'||j.state==='transcribing') b.push(btn(j.id,'requeue','↻ U queue'));
+  if (j.llm_deferred && (j.state==='transcribing'||j.state==='processing')) b.push(btn(j.id,'llm-now','▶ Članak ipak sada','Sažetak i članak su odgođeni ('+j.llm_deferred+'). Klik otvara nov 5h prozor Claude kvote odmah.'));
   if (j.state==='done') b.push('<a class="act a-requeue" href="/admin/reprocess/'+esc(j.id)+'" title="Podigni epizodu na razinu nove: prijepis, članak, Magisterium — po izboru">🔁 Ponovna obrada</a>');
   b = b.concat(magActions(j));
   b.push(btn(j.id,'delete','✕'));
@@ -783,6 +786,7 @@ function srcBadge(j){
 async function act(id, action){
   // soft-delete (delete) je reverzibilno → bez potvrde; trajno (purge) → confirm.
   if (action==='purge' && !confirm('Trajno obrisati ovaj job iz baze? Nepovratno.')) return;
+  if (action==='llm-now' && !confirm('Pokrenuti sažetak i članak odmah? Otvara se nov 5h prozor Claude kvote (ograda ga čuva za jutro u 08:30).')) return;
   try { await fetch(ACT+'/'+id+'/'+action, { method:'POST' }); } catch(e) {}
   refresh();
 }

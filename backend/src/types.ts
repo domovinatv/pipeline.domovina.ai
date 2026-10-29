@@ -259,6 +259,8 @@ export interface JobRow {
   transcription: string; // 'soniox' | 'canary' | 'none' (stari reci: 'speechmatics') (samo reprocess) — NAMJERA za prioritetni fast-path (≠ transcribe_backend)
   reprocess: number; // 1 = namjerna ponovna obrada već objavljene epizode
   redo_article: number; // 0 = ne diraj postojeći članak (samo reprocess bez novog prijepisa)
+  llm_deferred: string | null; // razlog odgode koraka 7+8 (ograda Claude prozora); NULL = nije odgođen
+  llm_force: number; // 1 = admin pristao na nov prozor kvote → bridge vrti bez ograde
   transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju
   transcribe_claimed_at: number | null; // unix sekunde kad je transcribe lock uzet
   done_at: number | null;

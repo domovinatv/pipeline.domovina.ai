@@ -237,8 +237,14 @@ function magStateBadge(j){
   return one('hr', j.mag_hr_state)+one('en', j.mag_en_state);
 }
 // Svi bedževi stanja/izbora joba, istim redom na obje stranice.
+// Koraci 7+8 odgođeni ogradom Claude prozora (bridge javi razlog). Bez ovoga job samo
+// „visi" u processing, a članak bi čekao idući nightly.
+function deferredBadge(j){
+  if (!j.llm_deferred || j.state==='done') return '';
+  return '<span class="pill warn" title="'+esc('Sažetak i članak odgođeni: '+j.llm_deferred+'. Bez akcije ih radi idući nightly.')+'">⏸ članak odgođen</span>';
+}
 function jobBadges(j){
-  return priorityBadge(j)+reprocessBadge(j)+transcriptionBadge(j)+transcribeBadge(j)+magStateBadge(j)+modelBadge(j);
+  return deferredBadge(j)+priorityBadge(j)+reprocessBadge(j)+transcriptionBadge(j)+transcribeBadge(j)+magStateBadge(j)+modelBadge(j);
 }
 
 // ── Selecti modela u retku. kind='llm-model' (koraci 7+8) | 'mag-model' (korak 8.5).

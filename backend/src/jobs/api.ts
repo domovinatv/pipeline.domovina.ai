@@ -106,6 +106,7 @@ jobsApi.patch('/:id', async (c) => {
     title?: string | null;
     channel?: string | null;
     duration_seconds?: number | null;
+    llm_deferred?: string | null;
   };
   if (body.state && !BRIDGE_SETTABLE.includes(body.state as never)) {
     return c.json({ error: `state '${body.state}' nije dozvoljen` }, 400);
@@ -117,6 +118,7 @@ jobsApi.patch('/:id', async (c) => {
     title: body.title,
     channel: body.channel,
     durationSeconds: body.duration_seconds,
+    llmDeferred: body.llm_deferred,
   });
   if (!job) return c.json({ error: 'not found' }, 404);
   return c.json({ job });

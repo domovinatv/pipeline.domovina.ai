@@ -34,6 +34,7 @@ import {
   setJobMagisteriumModel,
   softDeleteJob,
   updateJob,
+  forceLlmNow,
   QueueFullError,
 } from '../db';
 import type { DiscoveredRow, JobRow } from '../types';
@@ -184,6 +185,7 @@ admin.get('/reprocess/:id', async (c) => {
 //   skip     — state=skipped (nikad se ne claima)
 //   postpone — state=postponed (drži izvan queuea)
 //   requeue  — vrati u queued (iz skipped/postponed/failed), očisti grešku
+//   llm-now  — koraci 7+8 odgođeni (ograda Claude prozora) → prioritetni red bez ograde
 // Live listing SVIH CDN artefakata jednog videa (data/{id}/ + images/{id}/) direktno
 // iz R2 bindinga — ne iz curated liste ključeva, pa pokazuje i buduće/neočekivane
 // datoteke. Javni bucket nema directory listing, ovo je jedini potpun pogled.
@@ -229,6 +231,12 @@ admin.post('/jobs/:id/:action', async (c) => {
       break;
     case 'requeue':
       await updateJob(c.env.DB, id, { state: 'queued', error: null });
+      break;
+    case 'llm-now':
+      // Koraci 7+8 su odgođeni zbog ograde Claude prozora — admin svjesno otvara nov prozor.
+      if (!(await forceLlmNow(c.env.DB, id))) {
+        return c.json({ error: 'job nije odgođen (ili upravo radi) — nema što pokrenuti' }, 409);
+      }
       break;
     case 'prioritize':
       // Admin digne queued job na prioritet (besplatno; naplata je samo na dashboard putu).

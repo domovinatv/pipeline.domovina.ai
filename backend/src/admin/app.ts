@@ -35,6 +35,7 @@ import {
   softDeleteJob,
   updateJob,
   forceLlmNow,
+  setLlmForce,
   QueueFullError,
 } from '../db';
 import type { DiscoveredRow, JobRow } from '../types';
@@ -68,6 +69,8 @@ admin.post('/jobs', async (c) => {
   const title = cleanTitle(String(form.title ?? ''), raw);
   const force = String(form.force ?? '') === '1'; // "svejedno dodaj" iz potvrdne stranice
   const priority = String(form.priority ?? '') === '1' ? 1 : 0; // admin prioritet (besplatno)
+  // Forsiraj članak: koraci 7+8 bez ograde Claude prozora (admin svjesno troši kvotu odmah).
+  const llmForce = String(form.llm_force ?? '') === '1';
   // Ponovna obrada već objavljene epizode — dolazi SAMO s potvrdne stranice (force=1).
   const reprocess = force && String(form.reprocess ?? '') === '1';
   // Transkripcija (prioritetni fast-path): nepoznata/izostavljena → default (kao nightly).
@@ -146,6 +149,7 @@ admin.post('/jobs', async (c) => {
     transcription,
     reprocess,
     redoArticle,
+    llmForce,
   });
   } catch (e) {
     if (!(e instanceof QueueFullError)) throw e;
@@ -186,6 +190,7 @@ admin.get('/reprocess/:id', async (c) => {
 //   postpone — state=postponed (drži izvan queuea)
 //   requeue  — vrati u queued (iz skipped/postponed/failed), očisti grešku
 //   llm-now  — koraci 7+8 odgođeni (ograda Claude prozora) → prioritetni red bez ograde
+//   llm-force — unaprijed: job još nije odgođen → bridge ga vrti bez ograde kad dođe na red
 // Live listing SVIH CDN artefakata jednog videa (data/{id}/ + images/{id}/) direktno
 // iz R2 bindinga — ne iz curated liste ključeva, pa pokazuje i buduće/neočekivane
 // datoteke. Javni bucket nema directory listing, ovo je jedini potpun pogled.
@@ -236,6 +241,12 @@ admin.post('/jobs/:id/:action', async (c) => {
       // Koraci 7+8 su odgođeni zbog ograde Claude prozora — admin svjesno otvara nov prozor.
       if (!(await forceLlmNow(c.env.DB, id))) {
         return c.json({ error: 'job nije odgođen (ili upravo radi) — nema što pokrenuti' }, 409);
+      }
+      break;
+    case 'llm-force':
+      // Unaprijed: job još nije odgođen, ali admin ne želi čekati ogradu (npr. vikend).
+      if (!(await setLlmForce(c.env.DB, id))) {
+        return c.json({ error: 'job je već forsiran, odgođen ili završen' }, 409);
       }
       break;
     case 'prioritize':

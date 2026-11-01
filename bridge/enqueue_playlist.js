@@ -28,6 +28,7 @@
  *   --include-published     queueaj i videe koji su već objavljeni na domovina.ai
  *   --only ID[,ID…]         samo ovi ID-evi iz playliste
  *   --limit N               samo prvih N (nakon --only)
+ *   --force-llm             sažetak+članak bez ograde Claude kvote (npr. vikend)
  */
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -45,6 +46,7 @@ const DRY_RUN = argv.includes('--dry-run');
 const PRIORITY = argv.includes('--priority');
 const NO_MAG = argv.includes('--no-magisterium');
 const INCLUDE_PUBLISHED = argv.includes('--include-published');
+const FORCE_LLM = argv.includes('--force-llm');
 const TRANSCRIPTION = getArg('--transcription');
 const ARTICLE_MODEL = getArg('--article-model');
 const MAG_MODEL = getArg('--magisterium-model');
@@ -125,6 +127,7 @@ async function main() {
       magisterium_model: MAG_MODEL || undefined,
       with_magisterium: !NO_MAG,
       skip_published: !INCLUDE_PUBLISHED,
+      llm_force: FORCE_LLM || undefined,
     };
     let res, data;
     try {

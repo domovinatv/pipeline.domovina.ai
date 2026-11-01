@@ -347,6 +347,8 @@ button.act.a-requeue  { color: #1D4ED8; border-color: #CDDDF6; }
 button.act.a-requeue:hover  { background: #E7EEF8; }
 button.act.a-llm-now  { color: var(--warning); border-color: #F3D9B1; }
 button.act.a-llm-now:hover  { background: #FDF1E0; }
+button.act.a-llm-force  { color: var(--warning); border-color: #F3D9B1; }
+button.act.a-llm-force:hover  { background: #FDF1E0; }
 button.act.a-delete   { color: #B42318; border-color: #F3C9C5; }
 button.act.a-delete:hover   { background: #F8E2E0; }
 button.act.a-restore  { color: #1D4ED8; border-color: #CDDDF6; }
@@ -675,6 +677,7 @@ ${navTabs('queue')}
     </div>
     <div class="field">
       <label class="tieropt"><input type="checkbox" name="priority" value="1"> ⚡ Prioritet (Modal instant fast-path)</label>
+      <label class="tieropt"><input type="checkbox" name="llm_force" value="1"> ▶ Forsiraj članak (bez ograde Claude kvote — sažetak i članak odmah, i noću)</label>
     </div>
 ${renderJobChoiceFields()}
     <button type="submit"><span class="plus">+</span> Dodaj u queue</button>
@@ -765,6 +768,8 @@ function actions(j){
   if (j.state==='queued') { if (!j.priority) b.push(btn(j.id,'prioritize','⚡ Prioritet','Sponzoriraj instant obradu (Modal) — besplatno, radi i za API jobove')); b.push(btn(j.id,'skip','Skip')); b.push(btn(j.id,'postpone','Odgodi')); }
   if (j.state==='skipped'||j.state==='postponed'||j.state==='failed'||j.state==='transcribing') b.push(btn(j.id,'requeue','↻ U queue'));
   if (j.llm_deferred && (j.state==='transcribing'||j.state==='processing')) b.push(btn(j.id,'llm-now','▶ Članak ipak sada','Sažetak i članak su odgođeni ('+j.llm_deferred+'). Klik otvara nov 5h prozor Claude kvote odmah.'));
+  if (!j.llm_force && !j.llm_deferred && (j.state==='queued'||j.state==='fetching'||j.state==='transcribing'||j.state==='processing'||j.state==='postponed')) b.push(btn(j.id,'llm-force','▶ Forsiraj','Sažetak i članak bez ograde Claude kvote kad job dođe na red (troši kvotu odmah, i noću).'));
+  if (j.llm_force && j.state!=='done') b.push('<span class="pill neutral" title="Koraci 7+8 idu bez ograde Claude kvote">▶ forsirano</span>');
   if (j.state==='done') b.push('<a class="act a-requeue" href="/admin/reprocess/'+esc(j.id)+'" title="Podigni epizodu na razinu nove: prijepis, članak, Magisterium — po izboru">🔁 Ponovna obrada</a>');
   b = b.concat(magActions(j));
   b.push(btn(j.id,'delete','✕'));
@@ -787,6 +792,7 @@ async function act(id, action){
   // soft-delete (delete) je reverzibilno → bez potvrde; trajno (purge) → confirm.
   if (action==='purge' && !confirm('Trajno obrisati ovaj job iz baze? Nepovratno.')) return;
   if (action==='llm-now' && !confirm('Pokrenuti sažetak i članak odmah? Otvara se nov 5h prozor Claude kvote (ograda ga čuva za jutro u 08:30).')) return;
+  if (action==='llm-force' && !confirm('Forsirati sažetak i članak bez ograde Claude kvote? Kad job dođe na red, troši kvotu odmah (i noću).')) return;
   try { await fetch(ACT+'/'+id+'/'+action, { method:'POST' }); } catch(e) {}
   refresh();
 }

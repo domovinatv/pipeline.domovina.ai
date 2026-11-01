@@ -33,6 +33,7 @@ export interface CreateJobInput {
   transcription?: string; // 'soniox' (default) | 'canary' | 'none' (samo reprocess)
   reprocess?: boolean; // namjerna ponovna obrada već objavljene epizode
   redoArticle?: boolean; // default true; false samo uz reprocess i transcription='none'
+  llmForce?: boolean; // true = sažetak+članak bez ograde Claude prozora (admin/ingest izbor)
 }
 
 // Vrati postojeći ne-terminalni job za isti video (idempotencija/dedup), ako postoji.
@@ -152,8 +153,8 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
   // pa ni paralelni zahtjevi ne mogu prebaciti granicu.
   const res = await db
     .prepare(
-      `INSERT INTO jobs (id, youtube_id, youtube_url, source_platform, source_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, llm_backend, llm_model, magisterium_model, transcription, reprocess, redo_article, attempts, created_at, updated_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?
+      `INSERT INTO jobs (id, youtube_id, youtube_url, source_platform, source_url, title, channel, source, api_key_id, state, visibility, price_cents, paid, priority, credit_cost, with_magisterium, llm_backend, llm_model, magisterium_model, transcription, reprocess, redo_article, llm_force, attempts, created_at, updated_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'unlisted', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?
        WHERE (${QUEUED_COUNT}) < ?
          AND (? IS NULL OR (${QUEUED_COUNT} AND api_key_id = ?) < ?)`,
     )
@@ -183,6 +184,7 @@ export async function createJob(db: D1Database, input: CreateJobInput): Promise<
       input.transcription ?? DEFAULT_TRANSCRIPTION,
       input.reprocess ? 1 : 0,
       input.redoArticle === false ? 0 : 1,
+      input.llmForce ? 1 : 0,
       ts,
       ts,
       MAX_QUEUED_TOTAL,
@@ -387,6 +389,21 @@ export async function updateJob(
 // prioritetni red s llm_force=1 — bridge ga tada vrti bez ograde. Run je idempotentan, pa
 // fetch/transkripcija se preskoče i ostanu samo sažetak + članak + upload. Guard na
 // llm_deferred: ne diramo job koji upravo radi niti onaj koji nije odgođen.
+// „Forsiraj": admin unaprijed pristaje na nov prozor kvote za job koji JOŠ nije odgođen
+// (queued/fetching/transcribing/processing). Bridge tada vrti korake 7+8 bez ograde. Već
+// odgođen job ide kroz forceLlmNow (treba i povratak u red), pa ga ovdje ne diramo.
+export async function setLlmForce(db: D1Database, id: string): Promise<boolean> {
+  const res = await db
+    .prepare(
+      `UPDATE jobs SET llm_force=1, updated_at=?
+       WHERE id=? AND llm_force=0 AND llm_deferred IS NULL
+         AND state IN ('queued','fetching','transcribing','processing','postponed') AND deleted_at IS NULL`,
+    )
+    .bind(nowSec(), id)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
 export async function forceLlmNow(db: D1Database, id: string): Promise<boolean> {
   const ts = nowSec();
   const res = await db

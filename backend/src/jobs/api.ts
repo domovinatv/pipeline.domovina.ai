@@ -39,6 +39,8 @@ jobsApi.post('/', async (c) => {
     magisterium_model?: string;
     // true → video koji je već objavljen na domovina.ai preskoči (ne queueaj duplikat).
     skip_published?: boolean;
+    // true → sažetak+članak bez ograde Claude prozora (npr. vikend, nitko ne radi).
+    llm_force?: boolean;
   };
   const ref = await extractSourceRef(body.url || body.youtube_id || '');
   if (!ref) return c.json({ error: 'Neispravan YouTube/X URL/ID' }, 400);
@@ -69,6 +71,7 @@ jobsApi.post('/', async (c) => {
     llmModel: article?.model,
     magisteriumModel: parseMagisteriumModel(body.magisterium_model ?? ''),
     transcription: parseTranscription(body.transcription ?? '', false) ?? DEFAULT_TRANSCRIPTION,
+    llmForce: body.llm_force === true,
   });
   return c.json({ job }, 201);
 });

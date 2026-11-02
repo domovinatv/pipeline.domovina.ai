@@ -198,7 +198,17 @@ function antiBotSince() {
 
 (async () => {
   const proxy = liveProxy();
-  const ab = proxy ? null : antiBotSince();
+  let ab = proxy ? null : antiBotSince();
+  if (ab) {
+    // Blok ne smeta jobovima koji su već skinuti (npr. ručno kroz proxy): fetch.js ih preskoči
+    // po _unlisted-state.json, a screenshotovi padnu na lokalni 360p fallback.
+    const { jobs: queued } = await api('GET', '/api/jobs?state=queued&limit=200');
+    const prio = (queued || []).filter((j) => j.priority);
+    if (prio.length && prio.every((j) => downloaded(j.youtube_id))) {
+      console.log(`▶️  YouTube anti-bot, ali svih ${prio.length} prioritetnih u redu je već skinuto — claimam.`);
+      ab = null;
+    }
+  }
   if (ab) {
     const until = new Date(ab.atMs + ANTIBOT_COOLDOWN_MIN * 60000).toTimeString().slice(0, 5);
     console.log(`⏸️  YouTube anti-bot (${ab.source}, ${ab.video_id || '?'}, ${ab.at}) — ne claimam do ${until}.`);

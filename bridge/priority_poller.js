@@ -22,6 +22,8 @@
  *   PRIORITY_MAX               (default 3 — koliko prioritetnih po ticku)
  *   PRIORITY_DAILY_MAX         (default 30 — koliko prioritetnih po lokalnom danu, ukupno)
  *   PRIORITY_BUDGET_FILE       (default ~/.cache/domovina-pipeline/priority_budget.json)
+ *   PRIORITY_YT_COOLDOWN_MIN   (default 120) — pauza claimanja nakon YouTube anti-bot markera
+ *   PRIORITY_MIN_CLAIM_GAP_SEC (default 300) — najmanji razmak između dva claima
  *
  * Dnevni budžet je zadnja kočnica za novac (Soniox/pyannoteAI/Speechmatics/Modal/LLM): drži se LOKALNO, pa
  * vrijedi i kad je Worker/baza kompromitirana (incident 14.10. — kroz admin bypass moglo se
@@ -37,6 +39,13 @@ const INGEST_KEY = process.env.PIPELINE_QUEUE_INGEST_KEY;
 const FETCH_REPO = process.env.FETCH_REPO || path.resolve(__dirname, '..', '..', 'fetch.domovina.tv');
 const PRIORITY_MAX = parseInt(process.env.PRIORITY_MAX || '3', 10);
 const PRIORITY_DAILY_MAX = parseInt(process.env.PRIORITY_DAILY_MAX || '30', 10);
+// YouTube anti-bot (02.11.2026.): fetch.js / screenshot_youtube.js na „Sign in to confirm
+// you're not a bot" pišu marker; dok je svjež, poller NE claima (jobovi čekaju u queued).
+// Bez toga je 02.11. od 06:17 svaki idući job pao za 90 s (9/21 noćne serije).
+const ANTIBOT_FILE = path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'youtube_antibot.json');
+const ANTIBOT_COOLDOWN_MIN = parseInt(process.env.PRIORITY_YT_COOLDOWN_MIN || '120', 10);
+// Najmanji razmak između dva claima (svaki claim = yt-dlp download + screenshotovi).
+const MIN_CLAIM_GAP_SEC = parseInt(process.env.PRIORITY_MIN_CLAIM_GAP_SEC || '300', 10);
 const BUDGET_FILE =
   process.env.PRIORITY_BUDGET_FILE ||
   path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'priority_budget.json');
@@ -162,8 +171,27 @@ function writeBudget(b) {
   fs.renameSync(tmp, BUDGET_FILE);
 }
 
+function antiBotSince() {
+  try {
+    const m = JSON.parse(fs.readFileSync(ANTIBOT_FILE, 'utf-8'));
+    const at = Date.parse(m.at);
+    if (Number.isFinite(at) && Date.now() - at < ANTIBOT_COOLDOWN_MIN * 60000) return { ...m, atMs: at };
+  } catch {}
+  return null;
+}
+
 (async () => {
+  const ab = antiBotSince();
+  if (ab) {
+    const until = new Date(ab.atMs + ANTIBOT_COOLDOWN_MIN * 60000).toTimeString().slice(0, 5);
+    console.log(`⏸️  YouTube anti-bot (${ab.source}, ${ab.video_id || '?'}, ${ab.at}) — ne claimam do ${until}.`);
+    return;
+  }
   const budget = readBudget();
+  if (budget.last_claim_at && Date.now() - budget.last_claim_at < MIN_CLAIM_GAP_SEC * 1000) {
+    console.log(`⏳ zadnji claim prije ${Math.round((Date.now() - budget.last_claim_at) / 1000)} s (< ${MIN_CLAIM_GAP_SEC} s) — čekam.`);
+    return;
+  }
   const left = PRIORITY_DAILY_MAX - budget.claimed;
   if (left <= 0) {
     // Jednom dnevno glasno u log (tick je svakih 90 s), inače tiho.
@@ -175,7 +203,7 @@ function writeBudget(b) {
   }
   const { jobs } = await api('POST', '/api/jobs/claim', { max: Math.min(PRIORITY_MAX, left), priority: true });
   // Broji se claim, ne uspjeh: i neuspjeli run je mogao potrošiti plaćene korake.
-  if (jobs.length) writeBudget({ ...budget, claimed: budget.claimed + jobs.length });
+  if (jobs.length) writeBudget({ ...budget, claimed: budget.claimed + jobs.length, last_claim_at: Date.now() });
   if (!jobs.length) {
     console.log('📭 Nema prioritetnih jobova.');
     return;
@@ -223,15 +251,28 @@ function writeBudget(b) {
     }
 
     console.log(`  🎙 transkripcija: ${FLOW_LABELS[transcriptionFlow(job)]}`);
+    const runStart = Date.now();
     spawnSync(RUN_PIPELINE, plan.args, { cwd: FETCH_REPO, stdio: 'inherit', env });
 
     // Ne vjeruj exit kodu (run_pipeline je set -e-toleran, non-fatalni koraci); provjeri disk.
     if (!downloaded(job.youtube_id)) {
+      const ab = antiBotSince();
+      const blocked = ab && ab.atMs >= runStart;
       await api('PATCH', `/api/jobs/${job.id}`, {
         state: 'failed',
-        error: 'prioritetni download nije uspio (private/anti-bot?) — nema info.json u _unlisted',
+        // „YouTube anti-bot" je ugovor: automatic/enqueue_all_new.js takve jobove šalje ponovno.
+        error: blocked
+          ? 'YouTube anti-bot (Sign in to confirm) — download blokiran, ponovi kasnije'
+          : 'prioritetni download nije uspio (private/anti-bot?) — nema info.json u _unlisted',
       });
-      console.log(`  ❌ nema info.json → failed`);
+      if (blocked) {
+        // Blokirani download nije potrošio plaćene korake → ne broji se u dnevni budžet.
+        const b = readBudget();
+        writeBudget({ ...b, claimed: Math.max(0, b.claimed - 1) });
+        console.log(`  ❌ YouTube anti-bot → failed; poller pauzira ${ANTIBOT_COOLDOWN_MIN} min`);
+      } else {
+        console.log(`  ❌ nema info.json → failed`);
+      }
       continue;
     }
     const meta = readMeta(job.youtube_id) || {};

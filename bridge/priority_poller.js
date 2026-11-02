@@ -187,6 +187,23 @@ function liveProxy() {
   return null;
 }
 
+// Tier 1 = videi praćenih kanala (fetch.domovina.tv automatic/podcasts/*-lista.txt, puni ih
+// refresh_podcasts.sh). Svi ostali su Tier 2 → Speechmatics (plan.js isTier2).
+function tier1Ids() {
+  const dir = path.join(FETCH_REPO, 'automatic', 'podcasts');
+  const ids = new Set();
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('-lista.txt')) continue;
+      const txt = fs.readFileSync(path.join(dir, f), 'utf-8');
+      for (const m of txt.matchAll(/(?:youtu\.be\/|[?&]v=)([A-Za-z0-9_-]{11})/g)) ids.add(m[1]);
+    }
+  } catch (e) {
+    console.log(`  ⚠️ popis praćenih nečitljiv (${e.message}) — sve ide kroz Soniox`);
+  }
+  return ids;
+}
+
 function antiBotSince() {
   try {
     const m = JSON.parse(fs.readFileSync(ANTIBOT_FILE, 'utf-8'));
@@ -249,6 +266,7 @@ function antiBotSince() {
     replace: sourceHas(path.join(FETCH_REPO, 'auto_reuse_adhoc.js'), '"--replace"'),
     reprocess: sourceHas(RUN_PIPELINE, '"--reprocess"'),
     reprocessArticle: sourceHas(RUN_PIPELINE, '"--reprocess-article"'),
+    tier1Ids: tier1Ids(),
   };
   for (const job of jobs) {
     console.log(`\n→ ⚡ ${job.youtube_id} (${job.id})${job.reprocess ? ' 🔁 ponovna obrada' : ''}`);
@@ -288,7 +306,8 @@ function antiBotSince() {
       plan.args.push('--proxy', proxy.url);
       console.log(`  🌐 yt-dlp kroz proxy ${proxy.url} (izlazni IP ${proxy.ip})`);
     }
-    console.log(`  🎙 transkripcija: ${FLOW_LABELS[transcriptionFlow(job)]}`);
+    console.log(`  🎙 transkripcija: ${FLOW_LABELS[transcriptionFlow(job)]}` +
+      (plan.env.ASR_PRIMARY === 'speechmatics' ? ' — Tier 2: Speechmatics primarni, Soniox fallback' : ''));
     const runStart = Date.now();
     spawnSync(RUN_PIPELINE, plan.args, { cwd: FETCH_REPO, stdio: 'inherit', env });
 

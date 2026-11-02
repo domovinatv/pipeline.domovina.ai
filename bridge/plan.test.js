@@ -149,3 +149,14 @@ test('odgođena ponovna obrada: samo članak, bez novog plaćenog prijepisa', ()
   assert.ok(!p.args.includes('--reprocess'));
   assert.equal(p.env.CLAUDE_WINDOW_GUARD, '0');
 });
+
+test('Tier 2: video izvan popisa praćenih ide prvo na Speechmatics', () => {
+  const caps = { replace: true, reprocess: true, reprocessArticle: true, tier1Ids: new Set(['TRACKED0001']) };
+  const job = (id) => ({ youtube_id: id, youtube_url: `https://youtu.be/${id}`, transcription: 'soniox', llm_backend: 'claude' });
+  assert.equal(planFor(job('TRACKED0001'), caps).env.ASR_PRIMARY, undefined);
+  assert.equal(planFor(job('OTHER000001'), caps).env.ASR_PRIMARY, 'speechmatics');
+  // bez popisa (nečitljiv) → Soniox kao prije
+  assert.equal(planFor(job('OTHER000001'), { ...caps, tier1Ids: new Set() }).env.ASR_PRIMARY, undefined);
+  // canary tok nema ASR_PRIMARY
+  assert.equal(planFor({ ...job('OTHER000001'), transcription: 'canary' }, caps).env.ASR_PRIMARY, undefined);
+});

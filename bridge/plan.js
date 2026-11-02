@@ -63,6 +63,11 @@ const FLOW_LABELS = {
   none: 'bez novog prijepisa',
 };
 
+/** Tier 2 = poznat popis praćenih videa (caps.tier1Ids) u kojem ovog videa nema. */
+function isTier2(job, caps) {
+  return !!(caps && caps.tier1Ids && caps.tier1Ids.size && !caps.tier1Ids.has(job.youtube_id));
+}
+
 /**
  * @param {object} job   red iz /api/jobs/claim
  * @param {{replace: boolean, reprocess: boolean, reprocessArticle: boolean}} caps  što fetch strana podržava
@@ -137,9 +142,13 @@ function planFor(job, caps) {
     ...(reprocess ? ['--reprocess'] : []),
   ];
   if (flow === 'cloud') plan.env = { ...plan.env, ...CLOUD_FLOW_ENV };
+  // Tier 2 (02.11.2026.): Soniox krediti su za praćene kanale (Tier 1 = video u
+  // fetch.domovina.tv automatic/podcasts/*-lista.txt). Sve ostalo ide prvo na Speechmatics,
+  // Soniox je tada fallback (transcribe_soniox.js čita ASR_PRIMARY). Bez popisa → Soniox.
+  if (flow === 'cloud' && isTier2(job, caps)) plan.env.ASR_PRIMARY = 'speechmatics';
   // Auto-reuse u channel dir (best-effort za nove videe; za ponovnu obradu OBAVEZAN prepis).
   plan.reuseArgs = ['--video-id', job.youtube_id, ...(reprocess ? ['--replace'] : [])];
   return plan;
 }
 
-module.exports = { planFor, transcriptionFlow, FLOW_LABELS, LLM_BACKENDS, CLOUD_FLOW_ARGS, CLOUD_FLOW_ENV };
+module.exports = { planFor, isTier2, transcriptionFlow, FLOW_LABELS, LLM_BACKENDS, CLOUD_FLOW_ARGS, CLOUD_FLOW_ENV };

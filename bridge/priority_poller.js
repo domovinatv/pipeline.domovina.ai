@@ -197,6 +197,13 @@ function antiBotSince() {
 }
 
 (async () => {
+  // Ručna pauza: dok postoji ~/.cache/domovina-pipeline/priority_hold, ništa se ne claima
+  // (npr. dok se kroz proxy unaprijed skida 1080p za screenshotove).
+  const HOLD_FILE = path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'priority_hold');
+  if (fs.existsSync(HOLD_FILE)) {
+    console.log(`⏸️  ${HOLD_FILE} postoji — ne claimam.`);
+    return;
+  }
   const proxy = liveProxy();
   let ab = proxy ? null : antiBotSince();
   if (ab) {

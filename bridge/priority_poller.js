@@ -24,6 +24,7 @@
  *   PRIORITY_BUDGET_FILE       (default ~/.cache/domovina-pipeline/priority_budget.json)
  *   PRIORITY_YT_COOLDOWN_MIN   (default 120) — pauza claimanja nakon YouTube anti-bot markera
  *   PRIORITY_MIN_CLAIM_GAP_SEC (default 300) — najmanji razmak između dva claima
+ *   ~/.cache/domovina-pipeline/youtube_proxy — ručni proxy za yt-dlp (vidi liveProxy)
  *
  * Dnevni budžet je zadnja kočnica za novac (Soniox/pyannoteAI/Speechmatics/Modal/LLM): drži se LOKALNO, pa
  * vrijedi i kad je Worker/baza kompromitirana (incident 14.10. — kroz admin bypass moglo se
@@ -171,6 +172,21 @@ function writeBudget(b) {
   fs.renameSync(tmp, BUDGET_FILE);
 }
 
+// Ručni YouTube proxy (02.11.2026.): ~/.cache/domovina-pipeline/youtube_proxy = jedan redak
+// s URL-om (npr. iPhone mobile-phone-proxy preko Tailscalea, http://100.71.146.11:8888).
+// Dok postoji i odgovara, yt-dlp koraci idu kroz njega (--proxy) i anti-bot pauza ne vrijedi.
+// Obriši datoteku kad proxy više ne treba.
+const PROXY_FILE = path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'youtube_proxy');
+function liveProxy() {
+  let url = '';
+  try { url = fs.readFileSync(PROXY_FILE, 'utf-8').trim(); } catch { return null; }
+  if (!url) return null;
+  const r = spawnSync('curl', ['-s', '-m', '15', '-x', url, 'https://api.ipify.org'], { encoding: 'utf-8' });
+  if (r.status === 0 && r.stdout.trim()) return { url, ip: r.stdout.trim() };
+  console.log(`⚠️  YouTube proxy ${url} ne odgovara — idem bez njega.`);
+  return null;
+}
+
 function antiBotSince() {
   try {
     const m = JSON.parse(fs.readFileSync(ANTIBOT_FILE, 'utf-8'));
@@ -181,7 +197,8 @@ function antiBotSince() {
 }
 
 (async () => {
-  const ab = antiBotSince();
+  const proxy = liveProxy();
+  const ab = proxy ? null : antiBotSince();
   if (ab) {
     const until = new Date(ab.atMs + ANTIBOT_COOLDOWN_MIN * 60000).toTimeString().slice(0, 5);
     console.log(`⏸️  YouTube anti-bot (${ab.source}, ${ab.video_id || '?'}, ${ab.at}) — ne claimam do ${until}.`);
@@ -250,6 +267,10 @@ function antiBotSince() {
       continue;
     }
 
+    if (proxy) {
+      plan.args.push('--proxy', proxy.url);
+      console.log(`  🌐 yt-dlp kroz proxy ${proxy.url} (izlazni IP ${proxy.ip})`);
+    }
     console.log(`  🎙 transkripcija: ${FLOW_LABELS[transcriptionFlow(job)]}`);
     const runStart = Date.now();
     spawnSync(RUN_PIPELINE, plan.args, { cwd: FETCH_REPO, stdio: 'inherit', env });

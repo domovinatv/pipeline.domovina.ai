@@ -105,6 +105,15 @@ function downloaded(youtubeId) {
   }
 }
 
+function silentMarker(youtubeId) {
+  try {
+    const f = fs.readdirSync(UNLISTED_DIR).find((x) => x.includes('_yt_' + youtubeId) && x.endsWith('.silent.json'));
+    return f ? JSON.parse(fs.readFileSync(path.join(UNLISTED_DIR, f), 'utf-8')) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Ograda Claude prozora (fetch.domovina.tv lib/claude_window.js) odgađa korake 7+8 bez
 // greške: run prođe, ali članka nema. Ako ga nema, pitaj istog arbitra zašto — razlog ide u
 // admin (badge + gumb „▶ Članak ipak sada"). null = nije odgođen (članak postoji, ograda je
@@ -213,6 +222,27 @@ function antiBotSince() {
   return null;
 }
 
+// Retry odmah nakon anti-bot pauze (03.11.2026.): bez ovoga je job pao u 10:02 čekao
+// idući nightly (03:59), iako je slot od 12:03 opet radio. Jednom po anti-bot događaju
+// (marker.retried_for === marker.at): kad pauza istekne ili kad proxy radi, pa
+// enqueue_all_new.js --retry-only ponovno pošalje jobove pale na downloadu (ista ograda:
+// najviše 3 pokušaja po epizodi, tjedna kvota).
+function retryAfterPause(proxy) {
+  let m;
+  try { m = JSON.parse(fs.readFileSync(ANTIBOT_FILE, 'utf-8')); } catch { return; }
+  const at = Date.parse(m.at);
+  if (!Number.isFinite(at) || m.retried_for === m.at) return;
+  const expired = Date.now() - at >= ANTIBOT_COOLDOWN_MIN * 60000;
+  if (!expired && !proxy) return;
+  const script = path.join(FETCH_REPO, 'automatic', 'enqueue_all_new.js');
+  if (!sourceHas(script, '--retry-only')) return;
+  console.log(`🔁 anti-bot pauza (${m.at}) ${expired ? 'istekla' : 'zaobiđena proxyjem'} — ponovno šaljem jobove pale na downloadu`);
+  const r = spawnSync('node', [script, '--retry-only'], { cwd: FETCH_REPO, stdio: 'inherit' });
+  if (r.status === 0) {
+    try { fs.writeFileSync(ANTIBOT_FILE, JSON.stringify({ ...m, retried_for: m.at, retried_at: new Date().toISOString() })); } catch {}
+  }
+}
+
 (async () => {
   // Ručna pauza: dok postoji ~/.cache/domovina-pipeline/priority_hold, ništa se ne claima
   // (npr. dok se kroz proxy unaprijed skida 1080p za screenshotove).
@@ -238,6 +268,7 @@ function antiBotSince() {
     console.log(`⏸️  YouTube anti-bot (${ab.source}, ${ab.video_id || '?'}, ${ab.at}) — ne claimam do ${until}.`);
     return;
   }
+  retryAfterPause(proxy);
   const budget = readBudget();
   if (budget.last_claim_at && Date.now() - budget.last_claim_at < MIN_CLAIM_GAP_SEC * 1000) {
     console.log(`⏳ zadnji claim prije ${Math.round((Date.now() - budget.last_claim_at) / 1000)} s (< ${MIN_CLAIM_GAP_SEC} s) — čekam.`);
@@ -330,6 +361,19 @@ function antiBotSince() {
       } else {
         console.log(`  ❌ nema info.json → failed`);
       }
+      continue;
+    }
+    // Video bez zvuka (fetch.domovina.tv lib/audio_silence.js, {base}.silent.json): članka
+    // nikad neće biti, pa job ne smije visjeti u 'transcribing'. Poruka namjerno NE odgovara
+    // retry uzorku enqueue_all_new.js (DOWNLOAD_FAIL_RE) — ponovno slanje ne pomaže.
+    const silent = silentMarker(job.youtube_id);
+    if (silent) {
+      await api('PATCH', `/api/jobs/${job.id}`, {
+        state: 'failed',
+        error: `video nema zvuka (max ${silent.max_volume_db ?? '-inf'} dB) — ASR preskočen, ne ponavlja se`,
+        ...(readMeta(job.youtube_id) || {}),
+      });
+      console.log('  🔇 video bez zvuka → failed');
       continue;
     }
     const meta = readMeta(job.youtube_id) || {};

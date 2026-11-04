@@ -101,6 +101,8 @@ jobsApi.get('/:id', async (c) => {
 });
 
 // Bridge javlja napredak: state / detail_url / error + metapodaci iz info.json.
+const ASR_PROVIDERS = ['soniox', 'speechmatics', 'canary'];
+
 jobsApi.patch('/:id', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     state?: string;
@@ -110,6 +112,7 @@ jobsApi.patch('/:id', async (c) => {
     channel?: string | null;
     duration_seconds?: number | null;
     llm_deferred?: string | null;
+    asr_provider?: string | null;
   };
   if (body.state && !BRIDGE_SETTABLE.includes(body.state as never)) {
     return c.json({ error: `state '${body.state}' nije dozvoljen` }, 400);
@@ -122,6 +125,7 @@ jobsApi.patch('/:id', async (c) => {
     channel: body.channel,
     durationSeconds: body.duration_seconds,
     llmDeferred: body.llm_deferred,
+    asrProvider: body.asr_provider === undefined || body.asr_provider === null || ASR_PROVIDERS.includes(body.asr_provider) ? body.asr_provider : undefined,
   });
   if (!job) return c.json({ error: 'not found' }, 404);
   return c.json({ job });

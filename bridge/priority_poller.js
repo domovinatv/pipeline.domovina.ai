@@ -114,6 +114,25 @@ function silentMarker(youtubeId) {
   }
 }
 
+// Stvarni ASR izvor teksta, s diska (04.11.2026.). Job nosi samo TRAŽENI tok ('soniox'), a
+// od 02.11. ASR se bira po tieru (ASR_PRIMARY), pa admin bez ovoga laže. Redoslijed je isti
+// kao kostur KORAKA 2.8 `auto`: soniox_pyannote → speechmatics_pyannote, pa goli ASR, pa Canary.
+// Prazna datoteka ne vrijedi (tihi video ostavi 0 B .speechmatics.srt). null = ne zna se.
+function asrProvider(youtubeId) {
+  let files;
+  try { files = fs.readdirSync(UNLISTED_DIR).filter((f) => f.includes('_yt_' + youtubeId)); } catch { return null; }
+  const nonEmpty = (re) => files.some((f) => {
+    if (!re.test(f)) return false;
+    try { return fs.statSync(path.join(UNLISTED_DIR, f)).size > 0; } catch { return false; }
+  });
+  if (nonEmpty(/\.soniox_pyannote(\.gemini)?\.diarized\.srt$/)) return 'soniox';
+  if (nonEmpty(/\.speechmatics_pyannote(\.gemini)?\.diarized\.srt$/)) return 'speechmatics';
+  if (nonEmpty(/\.soniox\.srt$/)) return 'soniox';
+  if (nonEmpty(/\.speechmatics\.srt$/)) return 'speechmatics';
+  if (nonEmpty(/\.wav\.canary\.srt$/)) return 'canary';
+  return null;
+}
+
 // Ograda Claude prozora (fetch.domovina.tv lib/claude_window.js) odgađa korake 7+8 bez
 // greške: run prođe, ali članka nema. Ako ga nema, pitaj istog arbitra zašto — razlog ide u
 // admin (badge + gumb „▶ Članak ipak sada"). null = nije odgođen (članak postoji, ograda je
@@ -378,8 +397,9 @@ function retryAfterPause(proxy) {
     }
     const meta = readMeta(job.youtube_id) || {};
     const deferred = llmDeferred(job.youtube_id, env);
-    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', llm_deferred: deferred, ...meta });
-    console.log(`  ✅ obrađeno (Modal) → transcribing${meta.channel ? ' (' + meta.channel + ')' : ''}`);
+    const asr = asrProvider(job.youtube_id);
+    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', llm_deferred: deferred, asr_provider: asr, ...meta });
+    console.log(`  ✅ obrađeno → transcribing${meta.channel ? ' (' + meta.channel + ')' : ''}${asr ? ' · ASR ' + asr : ''}`);
     if (deferred) console.log(`  ⏸️  koraci 7+8 odgođeni: ${deferred} — admin: „▶ Članak ipak sada"`);
 
     // Auto-reuse za praćene kanale: ako video pripada nekoj automatic/podcasts listi

@@ -211,7 +211,14 @@ function reprocessBadge(j){
   return ' <span class="pill model" title="Ponovna obrada već objavljene epizode: '+esc(what)+'">🔁 '+esc(what)+'</span>';
 }
 // Transkripcija: bitna samo za prioritetne jobove (standardne vrti nightly s globalnom konfiguracijom).
+var ASR_LABEL = { soniox: 'Soniox', speechmatics: 'Speechmatics', canary: 'Canary' };
 function transcriptionBadge(j){
+  // Stvarni izvor (bridge ga javi nakon obrade) ima prednost pred traženim: od 02.11.2026.
+  // ASR se bira po tieru, pa traženi 'soniox' kod Tier 2 epizode znači Speechmatics.
+  if (j.asr_provider) {
+    var asked = j.transcription && j.transcription!=='none' ? (TRANSCRIPTION_SHORT[j.transcription]||j.transcription) : '—';
+    return ' <span class="pill model" title="Stvarni izvor teksta (s diska nakon obrade). Traženo: '+esc(asked)+'">🎙 '+esc(ASR_LABEL[j.asr_provider]||j.asr_provider)+'</span>';
+  }
   if (!j.priority || !j.transcription || j.transcription==='none') return '';
   var sm = j.transcription === 'soniox' || j.transcription === 'speechmatics';
   return ' <span class="pill model" title="'+(sm?(j.transcription==='soniox'?'Soniox + pyannoteAI + Gemini sluh (kao nightly)':'Speechmatics + Gemini sluh (stari cloud tok)')+' → i words.json':'Samo Modal Canary + pyannote (jeftino, bez words.json)')+'">🎙 '+esc(TRANSCRIPTION_SHORT[j.transcription]||j.transcription)+'</span>';

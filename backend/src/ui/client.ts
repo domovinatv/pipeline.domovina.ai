@@ -241,6 +241,11 @@ function magStateBadge(j){
     var glyph = st==='done'?'✓':(st==='failed'?'⚠':(st==='running'?'⏳':'⧗'));
     return ' <span class="pill mag mag-'+cls+'" title="Magisterium '+lbl+': '+esc(st)+'">🕊 '+lbl+' '+glyph+'</span>';
   }
+  // EN job prevodi ono što postoji U TRENUTKU prijevoda. Kad HR Magisterium stigne kasnije,
+  // job je 'done', a Magisterium EN ne postoji (inventar: magisterium_en='missing').
+  if (j.mag_en_state==='done' && j.ep_mag_en==='missing') {
+    return one('hr', j.mag_hr_state)+' <span class="pill mag mag-wait" title="EN prijevod članka je gotov, ali Magisterium EN još ne postoji (HR Magisterium stigao nakon EN prijevoda). enqueue_en_new.js ga dopuni za nove epizode.">🕊 EN ◐</span>';
+  }
   return one('hr', j.mag_hr_state)+one('en', j.mag_en_state);
 }
 // Svi bedževi stanja/izbora joba, istim redom na obje stranice.

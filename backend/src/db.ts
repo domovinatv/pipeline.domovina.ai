@@ -257,7 +257,10 @@ export async function listJobs(db: D1Database, opts: ListOpts = {}): Promise<Job
     .prepare(
       `SELECT ${JOB_COLS_J}, ak.name AS api_key_name,
               (SELECT m.state FROM magisterium_jobs m WHERE m.youtube_id = j.youtube_id AND m.lang = 'hr' ORDER BY m.created_at DESC LIMIT 1) AS mag_hr_state,
-              (SELECT m.state FROM magisterium_jobs m WHERE m.youtube_id = j.youtube_id AND m.lang = 'en' ORDER BY m.created_at DESC LIMIT 1) AS mag_en_state
+              (SELECT m.state FROM magisterium_jobs m WHERE m.youtube_id = j.youtube_id AND m.lang = 'en' ORDER BY m.created_at DESC LIMIT 1) AS mag_en_state,
+              -- Stvarni artefakt s diska (report_inventory.js): EN job 'done' NE znači da Magisterium EN
+              -- postoji — EN zna proći prije nego HR Magisterium stigne. 'ok' pobjeđuje (kanal + _unlisted).
+              (SELECT e.magisterium_en FROM episodes e WHERE e.youtube_id = j.youtube_id ORDER BY (e.magisterium_en = 'ok') DESC LIMIT 1) AS ep_mag_en
        FROM jobs j LEFT JOIN api_keys ak ON ak.id = j.api_key_id
        ${where} ORDER BY j.created_at DESC LIMIT ? OFFSET ?`,
     )

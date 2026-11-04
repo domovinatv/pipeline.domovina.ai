@@ -260,6 +260,7 @@ export interface JobRow {
   reprocess: number; // 1 = namjerna ponovna obrada već objavljene epizode
   redo_article: number; // 0 = ne diraj postojeći članak (samo reprocess bez novog prijepisa)
   llm_deferred: string | null; // razlog odgode koraka 7+8 (ograda Claude prozora); NULL = nije odgođen
+  ep_mag_en?: string | null; // magisterium_en iz inventara epizoda (stvarni artefakt), samo u listi
   asr_provider: string | null; // stvarni ASR izvor ('soniox'|'speechmatics'|'canary'); NULL = nepoznato
   llm_force: number; // 1 = admin pristao na nov prozor kvote → bridge vrti bez ograde
   transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju

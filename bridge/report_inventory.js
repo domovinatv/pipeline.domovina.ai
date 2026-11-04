@@ -81,6 +81,18 @@ function perArticle(rest, stems, latestStem, suffix) {
   return stems.some((s) => rest.has(s + suffix)) ? 'partial' : 'missing';
 }
 
+// Magisterium EN je očekivan SAMO kad postoje oba izvora: HR Magisterium i EN članak (EN
+// Magisterium je prijevod sekcija iz article.en.json). Bez jednog od njih nije rupa nego
+// „nije planirano" ('na'), npr. kanal s HR Magisteriumom bez +EN ili epizoda bez Magisteriuma.
+// Inače je 1185 epizoda bez Magisteriuma pokazivalo „Magisterium EN ✗" i skrivalo prave rupe.
+function magisteriumEn(rest, stems, latestStem) {
+  const st = perArticle(rest, stems, latestStem, '.article.magisterium.en.json');
+  if (st !== 'missing') return st;
+  const hr = perArticle(rest, stems, latestStem, '.article.magisterium.json');
+  const en = perArticle(rest, stems, latestStem, '.article.en.json');
+  return hr !== 'missing' && en !== 'missing' ? 'missing' : 'na';
+}
+
 function classify(ep) {
   const rest = ep.rest; // Set svih sufiksa iza `_yt_<id>`
   const list = [...rest];
@@ -149,7 +161,7 @@ function classify(ep) {
     epub: has('.epub') ? 'ok' : 'missing',
     words: has('.words.json') ? 'ok' : has('.words.skipped.json') ? 'na' : 'missing',
     magisterium_hr: perArticle(rest, stems, latestStem, '.article.magisterium.json'),
-    magisterium_en: perArticle(rest, stems, latestStem, '.article.magisterium.en.json'),
+    magisterium_en: magisteriumEn(rest, stems, latestStem),
     article_en: perArticle(rest, stems, latestStem, '.article.en.json'),
   };
 }

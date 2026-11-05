@@ -28,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.21.4';
+export const APP_VERSION = 'v0.21.5';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -366,6 +366,12 @@ button.act.busy { opacity: .45; pointer-events: none; }
 /* Soft-deleted redak: prekrižen + zatamnjen (akcijski gumbi ostaju čitljivi) */
 tr.deleted td { text-decoration: line-through; opacity: .55; }
 tr.deleted .act { text-decoration: none; opacity: 1; }
+/* Razdjelnik dana u listi jobova */
+tr.day-sep td { background: var(--surface); border-top: 2px solid var(--navy); border-bottom: 1px solid var(--border-strong);
+  padding: .5rem .8rem; font-weight: 800; font-size: .82rem; color: var(--navy); letter-spacing: .01em; }
+tr.day-sep td span + span { margin-left: .75rem; font-weight: 600; }
+tr.day-sep:hover td { background: var(--surface); }
+tbody tr.day-sep:first-child td { border-top-width: 0; }
 /* Filter/search kontrole + pager */
 .controls select, .controls input {
   border: 1px solid var(--border); border-radius: .55rem; padding: .45rem .65rem;
@@ -438,6 +444,8 @@ footer { margin: 2rem 0 0; padding: 1.1rem 1.5rem 1.4rem; border-top: 1px solid 
   }
   tbody tr:hover { background: var(--card); }
   tbody td { display: block; width: 100%; border-bottom: 1px solid var(--surface); padding: .6rem 0; }
+  tbody tr.day-sep { background: transparent; border: 0; box-shadow: none; padding: 0; margin: 1.1rem 0 .5rem; }
+  tbody tr.day-sep td, tbody tr.day-sep td:last-child { background: transparent; border-top: 0; border-bottom: 2px solid var(--navy); padding: .3rem 0; }
   tbody tr td:last-child { border-bottom: 0; }
   /* Podovi širine stupaca vrijede SAMO za tablični prikaz — u kartici bi 23rem
      prelilo 390px ekran u horizontalni scroll. Isto i nowrap na uskim stupcima. */
@@ -796,6 +804,15 @@ async function act(id, action){
   try { await fetch(ACT+'/'+id+'/'+action, { method:'POST' }); } catch(e) {}
   refresh();
 }
+function dayKey(ts){ if(!ts) return ''; var d = new Date(ts*1000); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+function dayLabel(ts){
+  if(!ts) return 'bez datuma';
+  var d = new Date(ts*1000), t = new Date(), y = new Date(); y.setDate(t.getDate()-1);
+  var base = d.toLocaleDateString('hr-HR', { weekday:'long', day:'numeric', month:'numeric', year:'numeric' });
+  if (dayKey(ts) === dayKey(t.getTime()/1000)) return 'Danas · ' + base;
+  if (dayKey(ts) === dayKey(y.getTime()/1000)) return 'Jučer · ' + base;
+  return base;
+}
 async function refresh(){
   if (refreshBlocked()) return;
   try {
@@ -803,14 +820,21 @@ async function refresh(){
     if (!r.ok) return;
     var data = await r.json();
     renderStats(data.counts);
+    // Razdjelnik po danima (lista je created_at DESC): red-traka s datumom i brojem jobova
+    // tog dana na OVOJ stranici, pa se vidi gdje završava jedna noć i počinje druga.
+    var dayCount = {};
+    (data.jobs||[]).forEach(function(j){ var k = dayKey(j.created_at); dayCount[k] = (dayCount[k]||0) + 1; });
+    var lastDay = null;
     var rows = (data.jobs||[]).map(function(j){
+      var dk = dayKey(j.created_at), sep = '';
+      if (dk !== lastDay) { lastDay = dk; sep = '<tr class="day-sep"><td colspan="6"><span>'+esc(dayLabel(j.created_at))+'</span><span class="dim">'+dayCount[dk]+' '+(dayCount[dk]===1?'job':'jobova')+'</span></td></tr>'; }
       var vid = videoCell(j);
       var sub = [j.channel?esc(j.channel):'', j.duration_seconds?dur(j.duration_seconds):''].filter(Boolean).join(' · ');
       var meta = '<div>'+titleText(j)+'</div>'+(sub?'<div class="dim sub">'+sub+'</div>':'')+'<div class="sub">'+srcBadge(j)+jobBadges(j)+'</div>';
       var res = j.detail_url ? '<a href="'+esc(j.detail_url)+'" target="_blank" rel="noopener">▶ otvori</a>'
               : (j.state==='failed' && j.error ? '<span class="dim">'+esc(j.error).slice(0,80)+'</span>' : '<span class="dim">—</span>');
       // data-l = labela kolone za mobile karticu (CSS ::before)
-      return '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>' + detailRow(j);
+      return sep + '<tr'+(j.deleted_at?' class="deleted"':'')+'><td class="dim" data-l="Dodano">'+fmt(j.created_at)+'</td><td data-l="Video">'+vid+'</td><td data-l="Status">'+statusCell(j)+'</td><td data-l="Naslov">'+meta+'</td><td data-l="Rezultat">'+res+'</td><td data-l="Akcije">'+actions(j)+'</td></tr>' + detailRow(j);
     }).join('');
     document.getElementById('rows').innerHTML = rows || emptyRow((pState||pQ)?'Nema rezultata za filter.':'Nema jobova još. Dodaj prvi gore.');
     updatePager(data);

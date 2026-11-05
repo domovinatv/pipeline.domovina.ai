@@ -24,7 +24,8 @@
  *   PRIORITY_BUDGET_FILE       (default ~/.cache/domovina-pipeline/priority_budget.json)
  *   PRIORITY_YT_COOLDOWN_MIN   (default 120) — pauza claimanja nakon YouTube anti-bot markera
  *   PRIORITY_MIN_CLAIM_GAP_SEC (default 300) — najmanji razmak između dva claima
- *   ~/.cache/domovina-pipeline/youtube_proxy — ručni proxy za yt-dlp (vidi liveProxy)
+ *   ~/.cache/domovina-pipeline/youtube_proxy — ručni proxy za yt-dlp (vidi liveProxy); od 05.11.
+ *                              samo za skidanje (run_pipeline --download-proxy), nije potreban za ostatak
  *
  * Dnevni budžet je zadnja kočnica za novac (Soniox/pyannoteAI/Speechmatics/Modal/LLM): drži se LOKALNO, pa
  * vrijedi i kad je Worker/baza kompromitirana (incident 14.10. — kroz admin bypass moglo se
@@ -202,8 +203,8 @@ function writeBudget(b) {
 
 // Ručni YouTube proxy (02.11.2026.): ~/.cache/domovina-pipeline/youtube_proxy = jedan redak
 // s URL-om (npr. iPhone mobile-phone-proxy preko Tailscalea, http://100.71.146.11:8888).
-// Dok postoji i odgovara, yt-dlp koraci idu kroz njega (--proxy) i anti-bot pauza ne vrijedi.
-// Obriši datoteku kad proxy više ne treba.
+// Dok postoji i odgovara, skidanje medija ide kroz njega (--download-proxy) i anti-bot pauza
+// ne vrijedi. Ostatak runa ide preko Etherneta. Obriši/preimenuj datoteku kad proxy ne treba.
 const PROXY_FILE = path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'youtube_proxy');
 function liveProxy() {
   let url = '';
@@ -318,6 +319,7 @@ function retryAfterPause(proxy) {
     reprocessArticle: sourceHas(RUN_PIPELINE, '"--reprocess-article"'),
     tier1Ids: tier1Ids(),
   };
+  const downloadProxyFlag = sourceHas(RUN_PIPELINE, '"--download-proxy"');
   for (const job of jobs) {
     console.log(`\n→ ⚡ ${job.youtube_id} (${job.id})${job.reprocess ? ' 🔁 ponovna obrada' : ''}`);
     const plan = planFor(job, caps);
@@ -352,9 +354,17 @@ function retryAfterPause(proxy) {
       continue;
     }
 
-    if (proxy) {
+    // Proxy (iPhone) treba samo za skidanje medija (05.11.2026.): --download-proxy ga daje
+    // isključivo KORAKU 1 (fetch.js), a screenshotovi/titlovi/R2 idu preko Etherneta. Epizodi
+    // koja je već skinuta proxy se uopće ne daje, pa ga je moguće ugasiti čim su mediji na disku.
+    if (proxy && downloaded(job.youtube_id)) {
+      console.log(`  📦 medij već na disku — proxy ${proxy.url} ovom jobu ne treba`);
+    } else if (proxy && downloadProxyFlag) {
+      plan.args.push('--download-proxy', proxy.url);
+      console.log(`  🌐 skidanje kroz proxy ${proxy.url} (izlazni IP ${proxy.ip}); ostatak preko Etherneta`);
+    } else if (proxy) {
       plan.args.push('--proxy', proxy.url);
-      console.log(`  🌐 yt-dlp kroz proxy ${proxy.url} (izlazni IP ${proxy.ip})`);
+      console.log(`  🌐 yt-dlp kroz proxy ${proxy.url} (izlazni IP ${proxy.ip}) — run_pipeline nema --download-proxy`);
     }
     console.log(`  🎙 transkripcija: ${FLOW_LABELS[transcriptionFlow(job)]}` +
       (plan.env.ASR_PRIMARY === 'speechmatics' ? ' — Tier 2: Speechmatics primarni, Soniox fallback' : ''));

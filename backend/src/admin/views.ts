@@ -28,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.21.5';
+export const APP_VERSION = 'v0.21.6';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -237,7 +237,9 @@ button.act.del { color: var(--danger); border-color: #f3c9c5; }
 /* Video ćelija u tablici: thumbnail + izvorni link + domovina.ai link (videoCell, ui/client.ts) */
 .vidcell { display: flex; align-items: center; gap: .6rem; min-width: 0; }
 .vlinks { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
-.vlink { font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26ch; }
+.vlink { font-size: .8rem; white-space: nowrap; }
+.vlink .vid-id { font-weight: 800; color: var(--navy); }
+.pillbtn.fid { margin-top: .1rem; padding: .1rem .45rem; font-size: .74rem; text-transform: none; }
 .vlink.dim { color: var(--muted); }
 .rthumb { width: 88px; height: 50px; object-fit: cover; border-radius: .45rem; flex: none; background: var(--surface); border: 1px solid var(--border); }
 td .sub { font-size: .8rem; margin-top: .2rem; }
@@ -421,7 +423,7 @@ footer { margin: 2rem 0 0; padding: 1.1rem 1.5rem 1.4rem; border-top: 1px solid 
 /* ── Mobile: tablice postaju kartice (data-l atribut na <td> = labela kolone) ── */
 @media (max-width: 760px) {
   /* Mobile: linkovi videa smiju zauzeti punu širinu kartice */
-  .vlinks { flex: 1; } .vlink { max-width: 100%; }
+  .vlinks { flex: 1; } .vlink { white-space: normal; overflow-wrap: anywhere; }
   header { padding: .55rem 1rem; }
   header .badge { display: none; }
   main { padding: 1rem .9rem 2.25rem; }
@@ -714,7 +716,7 @@ ${renderJobChoiceFields()}
     <option value="postponed">postponed</option>
     <option value="skipped">skipped</option>
   </select>
-  <input id="fQ" class="search" type="search" placeholder="traži ID / naslov / kanal…">
+  <input id="fQ" class="search" type="search" placeholder="traži ID, URL, naslov, kanal…">
   <label for="fLimit" class="dim">po stranici:</label>
   <select id="fLimit">
     <option>25</option><option selected>50</option><option>100</option><option>200</option>
@@ -1273,7 +1275,7 @@ ${navTabs('episodes')}
   <select id="fState"><option value="">—</option>${stepOpts}</select>
   <label for="fSince" class="dim">od:</label>
   <input id="fSince" type="date">
-  <input id="fQ" class="search" type="search" placeholder="traži ID / naslov…">
+  <input id="fQ" class="search" type="search" placeholder="traži ID, URL, naslov…">
   <label for="fLimit" class="dim">po stranici:</label>
   <select id="fLimit"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
   <span class="spacer"></span>

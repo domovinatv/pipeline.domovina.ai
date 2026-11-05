@@ -304,15 +304,24 @@ function titleText(j){
 // Video ćelija: thumbnail + izvorni link + domovina.ai link (ili „čeka objavu").
 // Izvor: X (source_url = originalni X post) ili YouTube. youtube_id je za X sintetički →
 // NE gradi youtu.be link; koristi source_url iz baze.
+// Puni URL bez rezanja; YouTube ID unutar njega istaknut (glavna informacija retka).
+function hlId(url, id){
+  var e = esc(url), i = id ? esc(id) : '';
+  return (i && e.indexOf(i)>=0) ? e.split(i).join('<b class="vid-id">'+i+'</b>') : e;
+}
 function videoCell(j){
   var isX = j.source_platform === 'x';
-  var srcUrl = j.source_url ? esc(j.source_url) : (isX ? '' : 'https://youtu.be/'+esc(j.youtube_id));
+  var rawSrc = j.source_url ? j.source_url : (isX ? '' : 'https://youtu.be/'+j.youtube_id);
+  var srcUrl = esc(rawSrc);
   var srcTitle = isX ? 'Izvorni X post' : 'Izvorni YouTube video';
   var domUrl = j.detail_url ? esc(j.detail_url) : '';
-  var links = (srcUrl ? '<a class="mono vlink" href="'+srcUrl+'" target="_blank" rel="noopener" title="'+srcTitle+': '+srcUrl+'">'+(isX?'𝕏 '+srcUrl:srcUrl)+'</a>' : '')
-            + (domUrl ? '<a class="mono vlink" href="'+domUrl+'" target="_blank" rel="noopener" title="Objavljeno na domovina.ai">'+domUrl+'</a>'
+  var hid = isX ? '' : j.youtube_id;
+  var links = (srcUrl ? '<a class="mono vlink" href="'+srcUrl+'" target="_blank" rel="noopener" title="'+srcTitle+'">'+(isX?'𝕏 '+srcUrl:hlId(rawSrc, hid))+'</a>' : '')
+            + (domUrl ? '<a class="mono vlink" href="'+domUrl+'" target="_blank" rel="noopener" title="Objavljeno na domovina.ai">'+hlId(j.detail_url, hid)+'</a>'
                       : '<span class="mono vlink dim">domovina.ai — čeka objavu</span>');
-  return '<div class="vidcell">'+thumb(j)+'<div class="vlinks">'+links+'</div></div>';
+  // Klik na ID = filtriraj listu po tom videu (wireListControls).
+  var fid = '<button type="button" class="pillbtn fid mono" data-fid="'+esc(j.youtube_id)+'" title="Filtriraj listu po ovom ID-u">⌕ '+esc(j.youtube_id)+'</button>';
+  return '<div class="vidcell">'+thumb(j)+'<div class="vlinks">'+links+'<div>'+fid+'</div></div></div>';
 }
 
 // ── Koraci pipelinea, tokeni i CDN datoteke (detail redak ispod retka)
@@ -529,11 +538,26 @@ function refreshBlocked(){
   var af = document.activeElement;
   return !!(af && af.tagName === 'SELECT' && af.closest('#rows'));
 }
+// Pretraga prihvaća i cijeli URL (youtube.com/watch?v=, youtu.be/, shorts/, domovina.ai/v/{id})
+// → svodi se na 11-znakovni ID. Ostalo (naslov, kanal, X ID) ide kako je upisano.
+function normQ(q){ q = (q||'').trim(); return (/[/?]/.test(q) && ytId(q)) || q; }
+// Stanje pretrage u adresi (?q=) — link na filtrirani prikaz se može podijeliti/osvježiti.
+function syncQ(){
+  try { var u = new URL(location.href); if (pQ) u.searchParams.set('q', pQ); else u.searchParams.delete('q'); history.replaceState(null, '', u); } catch(e) {}
+}
+function setQ(q){ var fQ=document.getElementById('fQ'); pQ=normQ(q); if (fQ) fQ.value=pQ; pOffset=0; syncQ(); refresh(); }
 function wireListControls(){
   var fState=document.getElementById('fState'), fQ=document.getElementById('fQ'), fLimit=document.getElementById('fLimit'), qTimer=null;
+  if (!pQ) { try { pQ = normQ(new URLSearchParams(location.search).get('q')||''); } catch(e) {} }
+  if (pQ) fQ.value = pQ;
+  // Klik na ID chip u Video ćeliji → filter po tom ID-u (capture: prije handlera akcija).
+  document.getElementById('rows').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-fid]');
+    if (b) { e.stopPropagation(); setQ(pQ===b.dataset.fid ? '' : b.dataset.fid); window.scrollTo({ top: fQ.getBoundingClientRect().top + scrollY - 90, behavior: 'smooth' }); }
+  }, true);
   fState.addEventListener('change', function(){ pState=fState.value; pOffset=0; refresh(); });
   fLimit.addEventListener('change', function(){ pLimit=parseInt(fLimit.value,10)||50; pOffset=0; refresh(); });
-  fQ.addEventListener('input', function(){ clearTimeout(qTimer); qTimer=setTimeout(function(){ pQ=fQ.value.trim(); pOffset=0; refresh(); }, 350); });
+  fQ.addEventListener('input', function(){ clearTimeout(qTimer); qTimer=setTimeout(function(){ pQ=normQ(fQ.value); pOffset=0; syncQ(); refresh(); }, 350); });
   document.getElementById('pPrev').addEventListener('click', function(){ if(pOffset>0){ pOffset=Math.max(0,pOffset-pLimit); refresh(); } });
   document.getElementById('pNext').addEventListener('click', function(){ if(pOffset+pLimit<pTotal){ pOffset+=pLimit; refresh(); } });
   // Selecti modela u retcima (data-kind = ruta: llm-model | mag-model).

@@ -24,6 +24,18 @@ nedostajalo. Sad oba ekrana grade retke iz `backend/src/ui/client.ts`:
 od stranica. Na stranici ostaje samo ono što je stvarno njezino: admin akcije (skip,
 odgodi, soft-delete, 🔑 izvor), dashboard krediti, ⚡ forsiranje i dijalog ponovne obrade.
 
+## Video stupac i pretraga po ID-u (v0.21.6, 5.11.2026.)
+
+- `videoCell()` pokazuje **pune** URL-ove (YouTube + domovina.ai), bez ellipsisa; ID je
+  podebljan (`hlId`, `.vid-id`). Na mobileu se lomi (`overflow-wrap: anywhere`).
+- Chip `⌕ ID` (`button[data-fid]`) filtrira listu po tom videu; listener je u
+  `wireListControls()` u **capture** fazi, da ga stranični handler akcija ne pojede.
+- `normQ()` svodi zalijepljeni URL (watch?v=, youtu.be, shorts, live, domovina.ai/v/) na ID
+  preko `ytId()`; čisti tekst (naslov, kanal, X ID) ide kako je upisan. Normalizacija je
+  samo na klijentu — `/api/v1/jobs?q=` s punim URL-om i dalje radi LIKE na sirovom stringu.
+- Filter živi u adresi (`?q=`, `history.replaceState`), pa `/admin?q=ID` (link iz
+  Otkrivenih) radi. `/admin/episodes` ima vlastito čitanje `?q=` prije `wireListControls()`.
+
 ## Dizajn sustav (premium SaaS, v0.7.0)
 
 - Svijetla pozadina `--page` + bijele kartice (`--card`) sa sjenama

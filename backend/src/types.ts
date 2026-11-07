@@ -262,6 +262,7 @@ export interface JobRow {
   llm_deferred: string | null; // razlog odgode koraka 7+8 (ograda Claude prozora); NULL = nije odgođen
   ep_mag_en?: string | null; // magisterium_en iz inventara epizoda (stvarni artefakt), samo u listi
   asr_provider: string | null; // stvarni ASR izvor ('soniox'|'speechmatics'|'canary'); NULL = nepoznato
+  llm_provider: string | null; // stvarni LLM izvor 7+8 ('<backend>[:<model>]', npr. 'agy:gemini-3.8-flash-low'); NULL = nepoznato
   llm_force: number; // 1 = admin pristao na nov prozor kvote → bridge vrti bez ograde
   transcribe_backend: string | null; // NULL | 'colab' | 'modal' — tko drži transkripciju
   transcribe_claimed_at: number | null; // unix sekunde kad je transcribe lock uzet

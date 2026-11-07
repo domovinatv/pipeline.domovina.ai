@@ -28,7 +28,7 @@ import {
 // Verzija aplikacije — BUMPAJ prije svakog redeploya (semver). Prikazuje se u
 // footeru svih stranica (admin + dashboard) da se na prvi pogled zna koji je
 // build live. Podudaraj s "version" u package.json.
-export const APP_VERSION = 'v0.21.6';
+export const APP_VERSION = 'v0.22.0';
 
 const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
 <defs>
@@ -218,6 +218,7 @@ select.modelsel:focus { outline: none; border-color: var(--navy-h); box-shadow: 
 select.modelsel.mag { color: #4338CA; border-color: #DDD6FE; }
 /* Badge koji u meta čeliji pokazuje kojim modelom je job konfiguriran. */
 .pill.model { background: #EEF2FF; color: #4338CA; border: 1px solid #DDD6FE; text-transform: none; letter-spacing: 0; }
+.pill.model.differs { background: #FDF1E0; color: #B45309; border-color: #FCD9A8; } /* stvarno ≠ traženo */
 /* YouTube oEmbed preview (readonly) */
 .ytprev { display: flex; gap: .8rem; align-items: center; margin-top: .8rem; padding: .6rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .ytprev img { width: 120px; height: 68px; object-fit: cover; border-radius: .45rem; flex: none; background: var(--border); }

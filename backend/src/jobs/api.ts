@@ -102,6 +102,9 @@ jobsApi.get('/:id', async (c) => {
 
 // Bridge javlja napredak: state / detail_url / error + metapodaci iz info.json.
 const ASR_PROVIDERS = ['soniox', 'speechmatics', 'canary'];
+// Stvarni LLM izvor 7+8: '<backend>[:<model>]'. Bridge za Tier 2 pregazi traženi backend (agy).
+const LLM_PROVIDER_RE = /^(agy|claude|cli|vertex)(:[A-Za-z0-9._-]+)?$/;
+const validLlmProvider = (v: unknown): v is string => typeof v === 'string' && v.length <= 80 && LLM_PROVIDER_RE.test(v);
 
 jobsApi.patch('/:id', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -113,6 +116,7 @@ jobsApi.patch('/:id', async (c) => {
     duration_seconds?: number | null;
     llm_deferred?: string | null;
     asr_provider?: string | null;
+    llm_provider?: string | null;
   };
   if (body.state && !BRIDGE_SETTABLE.includes(body.state as never)) {
     return c.json({ error: `state '${body.state}' nije dozvoljen` }, 400);
@@ -126,6 +130,7 @@ jobsApi.patch('/:id', async (c) => {
     durationSeconds: body.duration_seconds,
     llmDeferred: body.llm_deferred,
     asrProvider: body.asr_provider === undefined || body.asr_provider === null || ASR_PROVIDERS.includes(body.asr_provider) ? body.asr_provider : undefined,
+    llmProvider: body.llm_provider === undefined || body.llm_provider === null || validLlmProvider(body.llm_provider) ? body.llm_provider : undefined,
   });
   if (!job) return c.json({ error: 'not found' }, 404);
   return c.json({ job });

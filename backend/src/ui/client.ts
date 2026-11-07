@@ -191,9 +191,18 @@ function articleShort(j){
   return o ? (o.short || o.label) : v;
 }
 // Badge: kojim je modelom job KONFIGURIRAN (7+8 i 8.5). Default se ne prikazuje.
+var LLM_PROVIDER_LABEL = { agy:'agy', claude:'Claude', cli:'Gemini CLI', vertex:'Vertex' };
 function modelBadge(j){
   var out = '';
-  if (articleValue(j) !== MODELS.defaults.article) {
+  if (j.llm_provider) {
+    // Stvarni izvor (bridge ga javi) ima prednost pred traženim: od 07.11.2026. Tier 2 jobovi
+    // traže claude:opus, a bridge ih vrti kroz agy u tmuxu (Gemini 3.8 Flash low).
+    var want = articleValue(j);
+    var pb = j.llm_provider.split(':')[0], pm = j.llm_provider.slice(pb.length+1);
+    var differs = want.indexOf(':')<0 ? pb!==want : j.llm_provider!==want;
+    var lbl = (LLM_PROVIDER_LABEL[pb]||pb) + (pm ? ' · '+pm : '') + (pb==='agy' ? ' (tmux)' : '');
+    out += ' <span class="pill model'+(differs?' differs':'')+'" title="Stvarni model koraka 7+8 (javlja bridge). Traženo: '+esc(want)+(differs?' — bridge je pregazio':'')+'">🤖 '+esc(lbl)+'</span>';
+  } else if (articleValue(j) !== MODELS.defaults.article) {
     out += ' <span class="pill model" title="Model koraka 7+8 (sažetak + članak)">🤖 '+esc(articleShort(j))+'</span>';
   }
   var mm = j.magisterium_model;

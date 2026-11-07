@@ -366,7 +366,7 @@ function retryAfterPause(proxy) {
     const bi = plan.args.indexOf('--gemini-backend');
     const llmBackend = bi !== -1 ? plan.args[bi + 1] : job.llm_backend;
     // Stvarni LLM izvor za admin pill (backend v0.22.0, format '<backend>[:<model>]').
-    const llmProvider = llmBackend === 'agy' ? `agy:${env.AGY_MODEL || 'gemini-3.8-flash-low'}`
+    const llmProvider = llmBackend === 'agy' ? `agy:${env.AGY_ARTICLE_MODEL || 'gemini-3.8-flash-high'}`
       : llmBackend === 'claude' ? `claude:${plan.env.CLAUDE_MODEL || job.llm_model || 'opus'}`
       : llmBackend === 'cli' ? 'cli' : null;
     if (llmBackend && llmBackend !== 'vertex') {

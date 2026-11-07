@@ -179,6 +179,22 @@ function llmDeferred(youtubeId, env) {
   return (r.stderr || '').replace(/^claude-window:\s*/, '').trim() || 'ograda Claude prozora';
 }
 
+// Stvarni model agy članka s diska (metadata.model, npr. 'agy:gemini-3.8-flash-high' kad je Argon
+// iznad tjednog praga pa je članak pisao fallback). null = nema agy članka.
+function agyArticleModel(youtubeId) {
+  try {
+    const f = fs.readdirSync(UNLISTED_DIR)
+      .filter((x) => x.includes('_yt_' + youtubeId) && x.endsWith('_agy.article.json'))
+      .map((x) => path.join(UNLISTED_DIR, x))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    if (!f) return null;
+    const m = JSON.parse(fs.readFileSync(f, 'utf-8')).metadata?.model;
+    return typeof m === 'string' && /^agy:[A-Za-z0-9._-]+$/.test(m) ? m : null;
+  } catch {
+    return null;
+  }
+}
+
 function readMeta(youtubeId) {
   try {
     const f = fs
@@ -369,6 +385,13 @@ function retryAfterPause(proxy) {
     const llmProvider = llmBackend === 'agy' ? `agy:${env.AGY_ARTICLE_MODEL || 'gemini-4-argon-low'}`
       : llmBackend === 'claude' ? `claude:${plan.env.CLAUDE_MODEL || job.llm_model || 'opus'}`
       : llmBackend === 'cli' ? 'cli' : null;
+    if (llmBackend === 'agy') {
+      // agy kvota u log (07.11.2026.): keš 5 min, ~3 s kad istekne, neuspjeh ne smeta claimu.
+      try {
+        const { readAgyUsage, formatAgyUsage } = require(path.join(FETCH_REPO, 'lib', 'agy_usage.js'));
+        console.log(`  🔋 ${formatAgyUsage(await readAgyUsage())}`);
+      } catch { /* bez loga kvote */ }
+    }
     if (llmBackend && llmBackend !== 'vertex') {
       console.log(`  🤖 koraci 7+8: ${llmBackend}${llmBackend !== job.llm_backend ? ` (job traži ${job.llm_backend}; Tier 2 → ${llmBackend})` : ''}${plan.env.CLAUDE_MODEL ? ' (CLAUDE_MODEL=' + plan.env.CLAUDE_MODEL + ')' : ''}`);
     }
@@ -446,7 +469,7 @@ function retryAfterPause(proxy) {
     const meta = readMeta(job.youtube_id) || {};
     const deferred = llmDeferred(job.youtube_id, env);
     const asr = asrProvider(job.youtube_id);
-    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', llm_deferred: deferred, asr_provider: asr, ...(llmProvider ? { llm_provider: llmProvider } : {}), ...meta });
+    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', llm_deferred: deferred, asr_provider: asr, ...(llmProvider ? { llm_provider: (llmBackend === 'agy' && agyArticleModel(job.youtube_id)) || llmProvider } : {}), ...meta });
     console.log(`  ✅ obrađeno → transcribing${meta.channel ? ' (' + meta.channel + ')' : ''}${asr ? ' · ASR ' + asr : ''}`);
     if (deferred) console.log(`  ⏸️  koraci 7+8 odgođeni: ${deferred} — admin: „▶ Članak ipak sada"`);
 

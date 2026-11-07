@@ -24,6 +24,8 @@
  *   PRIORITY_BUDGET_FILE       (default ~/.cache/domovina-pipeline/priority_budget.json)
  *   PRIORITY_YT_COOLDOWN_MIN   (default 120) — pauza claimanja nakon YouTube anti-bot markera
  *   PRIORITY_MIN_CLAIM_GAP_SEC (default 300) — najmanji razmak između dva claima
+ *   PRIORITY_MAX_5H            (default 80) — ne claima kad je 5-satni prozor Claude kvote ≥ X %
+ *   TIER2_LLM_BACKEND          (default agy) — backend koraka 7+8 i 9.9 za Tier 2 (plan.js)
  *   ~/.cache/domovina-pipeline/youtube_proxy — ručni proxy za yt-dlp (vidi liveProxy); od 05.11.
  *                              samo za skidanje (run_pipeline --download-proxy), nije potreban za ostatak
  *
@@ -48,6 +50,30 @@ const ANTIBOT_FILE = path.join(require('os').homedir(), '.cache', 'domovina-pipe
 const ANTIBOT_COOLDOWN_MIN = parseInt(process.env.PRIORITY_YT_COOLDOWN_MIN || '120', 10);
 // Najmanji razmak između dva claima (svaki claim = yt-dlp download + screenshotovi).
 const MIN_CLAIM_GAP_SEC = parseInt(process.env.PRIORITY_MIN_CLAIM_GAP_SEC || '300', 10);
+// Ograda 5-satnog prozora (07.11.2026.): Tier 2 jobovi idu s llm_force, pa ih ograda Claude
+// prozora (lib/claude_window.js) ne odgađa, a tjedna ograda (enqueue_all_new.js, 85 %) gleda
+// samo tjedni prozor. Jutros je 48 Tier 2 epizoda na Opusu za tri sata dovelo 5h prozor do
+// 91 % i zaključalo bi i interaktivne sesije. Usage se kešira 5 min (tick je svakih 90 s).
+const MAX_5H = parseFloat(process.env.PRIORITY_MAX_5H || '80');
+const USAGE_CACHE = path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'usage_cache.json');
+const USAGE_TTL_MS = 5 * 60000;
+
+/** 5-satni prozor u % ili null kad se ne da pročitati (tada se claima bez ograde). */
+async function fiveHourUsage() {
+  try {
+    const c = JSON.parse(fs.readFileSync(USAGE_CACHE, 'utf-8'));
+    if (Date.now() - c.at < USAGE_TTL_MS) return c.five_hour;
+  } catch {}
+  try {
+    const { readUsage } = require(path.join(FETCH_REPO, 'automatic', 'all_episodes_lib.js'));
+    const u = await readUsage();
+    try { fs.writeFileSync(USAGE_CACHE, JSON.stringify({ at: Date.now(), ...u })); } catch {}
+    return u.five_hour;
+  } catch (e) {
+    console.log(`  ⚠️ kvota nečitljiva (${e.message}) — claimam bez ograde 5h prozora`);
+    return null;
+  }
+}
 const BUDGET_FILE =
   process.env.PRIORITY_BUDGET_FILE ||
   path.join(require('os').homedir(), '.cache', 'domovina-pipeline', 'priority_budget.json');
@@ -294,6 +320,11 @@ function retryAfterPause(proxy) {
     console.log(`⏳ zadnji claim prije ${Math.round((Date.now() - budget.last_claim_at) / 1000)} s (< ${MIN_CLAIM_GAP_SEC} s) — čekam.`);
     return;
   }
+  const fiveHour = await fiveHourUsage();
+  if (fiveHour !== null && fiveHour >= MAX_5H) {
+    console.log(`⏸️  5h prozor Claude kvote ${fiveHour} % ≥ ${MAX_5H} % — ne claimam (PRIORITY_MAX_5H).`);
+    return;
+  }
   const left = PRIORITY_DAILY_MAX - budget.claimed;
   if (left <= 0) {
     // Jednom dnevno glasno u log (tick je svakih 90 s), inače tiho.
@@ -331,8 +362,15 @@ function retryAfterPause(proxy) {
     // NB: ne diramo ANTHROPIC_API_KEY; ako je postavljen, run_pipeline.sh već upozori da bi
     // claude CLI mogao naplaćivati per-token umjesto da koristi pretplatu.
     const env = { ...process.env, ...plan.env };
-    if (job.llm_backend && job.llm_backend !== 'vertex') {
-      console.log(`  🤖 koraci 7+8: ${job.llm_backend}${plan.env.CLAUDE_MODEL ? ' (CLAUDE_MODEL=' + plan.env.CLAUDE_MODEL + ')' : ''}`);
+    // Backend iz plana, ne iz joba: Tier 2 plan pregazi job.llm_backend (agy, 07.11.2026.).
+    const bi = plan.args.indexOf('--gemini-backend');
+    const llmBackend = bi !== -1 ? plan.args[bi + 1] : job.llm_backend;
+    // Stvarni LLM izvor za admin pill (backend v0.22.0, format '<backend>[:<model>]').
+    const llmProvider = llmBackend === 'agy' ? `agy:${env.AGY_MODEL || 'gemini-3.8-flash-low'}`
+      : llmBackend === 'claude' ? `claude:${plan.env.CLAUDE_MODEL || job.llm_model || 'opus'}`
+      : llmBackend === 'cli' ? 'cli' : null;
+    if (llmBackend && llmBackend !== 'vertex') {
+      console.log(`  🤖 koraci 7+8: ${llmBackend}${llmBackend !== job.llm_backend ? ` (job traži ${job.llm_backend}; Tier 2 → ${llmBackend})` : ''}${plan.env.CLAUDE_MODEL ? ' (CLAUDE_MODEL=' + plan.env.CLAUDE_MODEL + ')' : ''}`);
     }
 
     if (plan.mode === 'none') {
@@ -408,7 +446,7 @@ function retryAfterPause(proxy) {
     const meta = readMeta(job.youtube_id) || {};
     const deferred = llmDeferred(job.youtube_id, env);
     const asr = asrProvider(job.youtube_id);
-    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', llm_deferred: deferred, asr_provider: asr, ...meta });
+    await api('PATCH', `/api/jobs/${job.id}`, { state: 'transcribing', llm_deferred: deferred, asr_provider: asr, ...(llmProvider ? { llm_provider: llmProvider } : {}), ...meta });
     console.log(`  ✅ obrađeno → transcribing${meta.channel ? ' (' + meta.channel + ')' : ''}${asr ? ' · ASR ' + asr : ''}`);
     if (deferred) console.log(`  ⏸️  koraci 7+8 odgođeni: ${deferred} — admin: „▶ Članak ipak sada"`);
 

@@ -160,3 +160,23 @@ test('Tier 2: video izvan popisa praćenih ide prvo na Speechmatics', () => {
   // canary tok nema ASR_PRIMARY
   assert.equal(planFor({ ...job('OTHER000001'), transcription: 'canary' }, caps).env.ASR_PRIMARY, undefined);
 });
+
+test('Tier 2: sažetak i članak idu kroz agy, Tier 1 ostaje na Claudeu', () => {
+  const caps = { replace: true, reprocess: true, reprocessArticle: true, tier1Ids: new Set(['TRACKED0001']) };
+  const job = (id, extra = {}) => ({ youtube_id: id, youtube_url: `https://youtu.be/${id}`, transcription: 'soniox', llm_backend: 'claude', llm_model: 'opus', ...extra });
+  const backendOf = (p) => p.args[p.args.indexOf('--gemini-backend') + 1];
+  const t2 = planFor(job('OTHER000001'), caps);
+  assert.equal(backendOf(t2), 'agy');
+  assert.equal(t2.env.CLAUDE_MODEL, undefined);
+  const t1 = planFor(job('TRACKED0001'), caps);
+  assert.equal(backendOf(t1), 'claude');
+  assert.equal(t1.env.CLAUDE_MODEL, 'opus');
+  // odgođena ponovna obrada Tier 2 (samo članak) isto ide kroz agy
+  assert.equal(backendOf(planFor(job('OTHER000001', { reprocess: 1, llm_force: 1 }), caps)), 'agy');
+  // bez popisa praćenih → ne zna se tier → backend iz joba
+  assert.equal(backendOf(planFor(job('OTHER000001'), { ...caps, tier1Ids: new Set() })), 'claude');
+  // TIER2_LLM_BACKEND=claude vraća stari put
+  process.env.TIER2_LLM_BACKEND = 'claude';
+  try { assert.equal(backendOf(planFor(job('OTHER000001'), caps)), 'claude'); }
+  finally { delete process.env.TIER2_LLM_BACKEND; }
+});

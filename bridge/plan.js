@@ -78,7 +78,13 @@ function planFor(job, caps) {
   const isX = typeof job.source === 'string' && job.source.startsWith('x');
   // Nepoznat/izostavljen backend → 'vertex' = bez zastavice, pa run_pipeline.sh ide na svoj
   // default (claude). Sam Vertex je DEPRECATED od 29.10.2026. i skripte ga odbijaju.
-  const backend = LLM_BACKENDS.includes(job.llm_backend) ? job.llm_backend : 'vertex';
+  let backend = LLM_BACKENDS.includes(job.llm_backend) ? job.llm_backend : 'vertex';
+  // Tier 2 (07.11.2026.): sažetak, članak i reels pišu se kroz agy/Gemini (Google AI Pro
+  // pretplata), ne kroz Claude. 48 Tier 2 epizoda × ~3 Opus poziva je jutros za tri sata
+  // napunilo 5-satni prozor Claude kvote. Pregazi i izričit 'claude' iz joba, jer ga
+  // enqueue_all_new.js šalje svakom jobu. TIER2_LLM_BACKEND=claude vraća stari put.
+  const tier2Backend = process.env.TIER2_LLM_BACKEND || 'agy';
+  if (isTier2(job, caps) && LLM_BACKENDS.includes(tier2Backend)) backend = tier2Backend;
   const backendArgs = backend !== 'vertex' ? ['--gemini-backend', backend] : [];
   // CLAUDE_MODEL čitaju summarize_gemini.js i generate_article_gemini.js (env > gemini.conf >
   // 'opus'). Postavlja se SAMO za claude backend — inače je varijabla no-op, ali bi zbunjivala.

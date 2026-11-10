@@ -99,6 +99,33 @@ async function api(method, pathname, body) {
   return res.json();
 }
 
+// Stuck sweep (10.11.2026.): ako proces pollera umre usred runa (10.11. hPc9eoApFJ0, idući
+// tick je zatekao mrtav PID na locku), zahtjev ostane 'running' zauvijek i nitko ga više ne
+// claima. Zahtjev naše trake koji je 'running' dulje od najduljeg mogućeg runa (timeout +
+// objava + 15 min) sigurno više nitko ne obrađuje → vrati ga u 'queued'. Samo jednom: ako
+// zapne i drugi put, 'failed' (inače bi se epizoda koja ruši proces vrtjela zauvijek).
+const STUCK_MARK = 'stuck-requeue';
+async function sweepStuck() {
+  try {
+    const { jobs } = await api('GET', '/api/magisterium?state=running&limit=500');
+    const nowSec = Date.now() / 1000;
+    for (const j of jobs) {
+      if (MAG_LANE !== 'all' && j.lang !== MAG_LANE) continue;
+      const runMs = (j.lang === 'en' ? EN_TIMEOUT_MAX_MS : RUN_TIMEOUT_MS) + PUBLISH_TIMEOUT_MS + 15 * 60000;
+      const since = j.claimed_at || j.updated_at || j.created_at;
+      if (!since || (nowSec - since) * 1000 < runMs) continue;
+      const again = String(j.error || '').includes(STUCK_MARK);
+      const min = Math.round((nowSec - since) / 60);
+      await api('PATCH', `/api/magisterium/${j.id}`, again
+        ? { state: 'failed', error: `${STUCK_MARK}: zapeo 2. put (${min} min running)` }
+        : { state: 'queued', error: `${STUCK_MARK}: ${min} min running, proces mrtav` });
+      console.log(`  ♻️ ${j.youtube_id} [${j.lang}] zapeo ${min} min u 'running' → ${again ? 'failed' : 'queued'}`);
+    }
+  } catch (e) {
+    console.error(`  ⚠️ stuck sweep: ${e.message} (nastavljam)`);
+  }
+}
+
 // Model za jedan zahtjev: izbor s njega (admin) ako je dozvoljen, inače env/default.
 // Nepoznata vrijednost se NE prosljeđuje — pada na default uz upozorenje, jer bi rušila run.
 function modelFor(job) {
@@ -319,6 +346,8 @@ function runDirect(youtubeId, force) {
   // (Gemini prijevod, bez Magisterium API-ja) — svaka ima svoj launchd posao i lock, pa EN više
   // ne čeka iza dugog HR runa ni obrnuto. Bez MAG_LANE stari redoslijed: HR prvi, EN tek kad
   // HR reda nema (21.10. dva HR-a stajala su iza EN-a).
+  await sweepStuck();
+
   let jobs = [];
   if (MAG_LANE !== 'en') ({ jobs } = await api('POST', '/api/magisterium/claim', { max: MAG_MAX, lang: 'hr' }));
   if (!jobs.length && MAG_LANE !== 'hr') ({ jobs } = await api('POST', '/api/magisterium/claim', { max: 1, lang: 'en' }));

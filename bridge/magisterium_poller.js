@@ -257,6 +257,32 @@ async function runEnglish(job) {
 const CLAUDE_WINDOW_BIN = process.env.CLAUDE_WINDOW_BIN || 'claude-window';
 let claudeWindowLastReason = '';
 
+// Katalog (domovina.ai/katalog) nosi Magisterium ocjenu u popisima /dani/ i /c/.
+// HR artefakt stiže satima nakon članka, a KORAK 13.5 je tada već prošao, pa bez
+// ovoga ocjena čeka jutarnji `ingest-episode --all` (08:45). Isti poziv kao
+// run_pipeline.sh KORAK 13.5; plan je idempotentan. Best-effort, kao inventar.
+const KATALOG_DIR = process.env.KATALOG_DIR || path.resolve(FETCH_REPO, '..', 'domovina.ai', 'katalog');
+function katalogIngest(youtubeId) {
+  if (!fs.existsSync(path.join(KATALOG_DIR, 'scripts', 'ingest-episode.ts'))) {
+    console.log(`  ⚠️ nema ${KATALOG_DIR}/scripts/ingest-episode.ts — katalog čeka jutarnji ingest`);
+    return;
+  }
+  const env = { ...process.env, KATALOG_KEY_CACHE_PATH: path.join(FETCH_REPO, '.r2_keys_cache.json') };
+  for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) delete env[k];
+  try {
+    const r = spawnSync('node', ['scripts/ingest-episode.ts', youtubeId], {
+      cwd: KATALOG_DIR,
+      env,
+      encoding: 'utf-8',
+      timeout: 6 * 60 * 1000,
+    });
+    const out = `${r.stdout || ''}${r.stderr || ''}`.trim().split('\n').filter((l) => /promjena|ishod|Magisterium/.test(l));
+    console.log(`  📚 katalog ingest: ${r.error ? r.error.code || r.error.message : `exit ${r.status}`}${out.length ? ' · ' + out.map((l) => l.trim()).join(' · ') : ''}`);
+  } catch (e) {
+    console.log(`  ⚠️ katalog ingest nije pokrenut: ${e.message}`);
+  }
+}
+
 // Osvježi redak u inventaru epizoda (/admin/episodes) za jedan video — bez čekanja nightlyja.
 // Best-effort: report_inventory.js sam soft-exita, a greška ovdje ne smije srušiti tick.
 function reportInventory(youtubeId) {
@@ -395,6 +421,8 @@ function runDirect(youtubeId, force) {
     if (live) {
       await api('PATCH', `/api/magisterium/${job.id}`, { state: 'done' });
       console.log(`  ✅ ${artifactName(job.lang)} live na CDN-u → done`);
+      // Ocjena (overall_score) je samo u HR artefaktu; EN je ne mijenja.
+      if (job.lang !== 'en') katalogIngest(job.youtube_id);
     } else {
       await api('PATCH', `/api/magisterium/${job.id}`, {
         state: 'failed',

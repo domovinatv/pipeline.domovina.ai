@@ -180,3 +180,14 @@ test('Tier 2: sažetak i članak idu kroz agy, Tier 1 ostaje na Claudeu', () => 
   try { assert.equal(backendOf(planFor(job('OTHER000001'), caps)), 'claude'); }
   finally { delete process.env.TIER2_LLM_BACKEND; }
 });
+
+test('Tier 2: istrošena agy Gemini kvota → Claude (12.11.2026.)', () => {
+  const caps = { replace: true, reprocess: true, reprocessArticle: true, tier1Ids: new Set(['TRACKED0001']) };
+  const job = (id) => ({ ...base, youtube_id: id, youtube_url: `https://www.youtube.com/watch?v=${id}` });
+  const backendOf = (p) => p.args[p.args.indexOf('--gemini-backend') + 1];
+  assert.equal(backendOf(planFor(job('OTHER000001'), caps)), 'agy');
+  const p = planFor(job('OTHER000001'), { ...caps, agyExhausted: true });
+  assert.equal(backendOf(p), 'claude');
+  assert.deepEqual(p.env, { CLAUDE_MODEL: 'opus' });
+  assert.equal(backendOf(planFor(job('TRACKED0001'), { ...caps, agyExhausted: true })), 'claude');
+});

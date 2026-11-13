@@ -83,7 +83,11 @@ function planFor(job, caps) {
   // pretplata), ne kroz Claude. 48 Tier 2 epizoda × ~3 Opus poziva je jutros za tri sata
   // napunilo 5-satni prozor Claude kvote. Pregazi i izričit 'claude' iz joba, jer ga
   // enqueue_all_new.js šalje svakom jobu. TIER2_LLM_BACKEND=claude vraća stari put.
-  const tier2Backend = process.env.TIER2_LLM_BACKEND || 'agy';
+  let tier2Backend = process.env.TIER2_LLM_BACKEND || 'agy';
+  // Istrošena agy Gemini kvota (12.11.2026.): tjedni prozor na 100 % znači da svaki agy poziv
+  // padne, pa Tier 2 ostane bez članka do reseta (~2 dana). Tada piše Claude (pretplata);
+  // priority_worker.sh i dalje drži CLAUDE_WINDOW_GUARD, pa pun 5h prozor odgodi, ne ruši.
+  if (tier2Backend === 'agy' && caps && caps.agyExhausted) tier2Backend = 'claude';
   if (isTier2(job, caps) && LLM_BACKENDS.includes(tier2Backend)) backend = tier2Backend;
   const backendArgs = backend !== 'vertex' ? ['--gemini-backend', backend] : [];
   // CLAUDE_MODEL čitaju summarize_gemini.js i generate_article_gemini.js (env > gemini.conf >

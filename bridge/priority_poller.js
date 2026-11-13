@@ -365,7 +365,20 @@ function retryAfterPause(proxy) {
     reprocess: sourceHas(RUN_PIPELINE, '"--reprocess"'),
     reprocessArticle: sourceHas(RUN_PIPELINE, '"--reprocess-article"'),
     tier1Ids: tier1Ids(),
+    agyExhausted: false,
   };
+  // agy kvota PRIJE plana (12.11.2026.): istrošen Gemini prozor → Tier 2 piše Claude.
+  // Prag AGY_GEMINI_MAX_PCT (default 98). Nečitljiva kvota = agy kao prije.
+  let agyUsage = null;
+  try {
+    const { readAgyUsage } = require(path.join(FETCH_REPO, 'lib', 'agy_usage.js'));
+    agyUsage = await readAgyUsage();
+    const max = parseFloat(process.env.AGY_GEMINI_MAX_PCT || '98');
+    if (agyUsage && ((agyUsage.gemini_weekly ?? 0) >= max || (agyUsage.gemini_5h ?? 0) >= max)) {
+      caps.agyExhausted = true;
+      console.log(`  🔋 agy Gemini kvota istrošena (5h ${agyUsage.gemini_5h} % · tj. ${agyUsage.gemini_weekly} %, reset ${agyUsage.resets?.gemini_weekly || '?'}) → Tier 2 piše Claude`);
+    }
+  } catch { /* bez kvote: agy kao prije */ }
   const downloadProxyFlag = sourceHas(RUN_PIPELINE, '"--download-proxy"');
   for (const job of jobs) {
     console.log(`\n→ ⚡ ${job.youtube_id} (${job.id})${job.reprocess ? ' 🔁 ponovna obrada' : ''}`);
@@ -388,12 +401,12 @@ function retryAfterPause(proxy) {
     if (llmBackend === 'agy') {
       // agy kvota u log (07.11.2026.): keš 5 min, ~3 s kad istekne, neuspjeh ne smeta claimu.
       try {
-        const { readAgyUsage, formatAgyUsage } = require(path.join(FETCH_REPO, 'lib', 'agy_usage.js'));
-        console.log(`  🔋 ${formatAgyUsage(await readAgyUsage())}`);
+        const { formatAgyUsage } = require(path.join(FETCH_REPO, 'lib', 'agy_usage.js'));
+        console.log(`  🔋 ${formatAgyUsage(agyUsage)}`);
       } catch { /* bez loga kvote */ }
     }
     if (llmBackend && llmBackend !== 'vertex') {
-      console.log(`  🤖 koraci 7+8: ${llmBackend}${llmBackend !== job.llm_backend ? ` (job traži ${job.llm_backend}; Tier 2 → ${llmBackend})` : ''}${plan.env.CLAUDE_MODEL ? ' (CLAUDE_MODEL=' + plan.env.CLAUDE_MODEL + ')' : ''}`);
+      console.log(`  🤖 koraci 7+8: ${llmBackend}${llmBackend !== job.llm_backend ? ` (job traži ${job.llm_backend}; Tier 2 → ${llmBackend}${caps.agyExhausted ? ', agy kvota istrošena' : ''})` : ''}${plan.env.CLAUDE_MODEL ? ' (CLAUDE_MODEL=' + plan.env.CLAUDE_MODEL + ')' : ''}`);
     }
 
     if (plan.mode === 'none') {

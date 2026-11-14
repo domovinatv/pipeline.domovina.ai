@@ -49,6 +49,9 @@ const CLOUD_FLOW_ARGS = ['--with-soniox', '--with-pyannote-ai', '--gemini-refine
 // Env, ne CLI zastavica: točno ovako ga zove nightly (automatic/nightly_pipeline.sh), a
 // planer ionako vraća env koji poller spoji preko process.env.
 const CLOUD_FLOW_ENV = { GEMINI_REFINE_SKELETON: 'auto' };
+// Jeftini tok bez cloud ASR-a: Canary + pyannote na Modalu, 2.8 samo promovira.
+const CANARY_FLOW_ARGS = ['--gemini-refine-promote', '--no-gemini-ear'];
+const CANARY_FLOW_ENV = { GEMINI_REFINE_SKELETON: 'auto', CANARY_FALLBACK_AFTER_H: '0', CANARY_FALLBACK_FRESH_DAYS: '0' };
 
 /** @returns {'cloud'|'canary'|'none'}  cloud = Soniox + pyannoteAI + Gemini sluh (default) */
 function transcriptionFlow(job) {
@@ -58,7 +61,7 @@ function transcriptionFlow(job) {
 }
 
 const FLOW_LABELS = {
-  cloud: 'Soniox + pyannoteAI + Gemini sluh (+ Modal Canary osigurač)',
+  cloud: 'Soniox + pyannoteAI (+ Modal Canary + pyannote kao rezerva)',
   canary: 'Modal Canary + pyannote',
   none: 'bez novog prijepisa',
 };
@@ -147,11 +150,15 @@ function planFor(job, caps) {
     // Fetch strana scope-a 2.7b/2.7c/2.8 na --modal-only video (PRIORITY_SCOPE_ARGS), bez
     // prozora svježine — ad-hoc video smije biti star godinama.
     ...(flow === 'cloud' ? CLOUD_FLOW_ARGS : []),
+    // 'canary' (14.11.2026.): lokalni pyannote (6) je ugašen 31.10., pa govornike daje Modal
+    // (canary_modal.py Diarizer), a 2.8 `auto` promovira Canary kostur odmah (bez čekanja 24 h).
+    ...(flow === 'canary' ? CANARY_FLOW_ARGS : []),
     // Ponovna obrada: fetch strana skloni staru _unlisted obradu prije runa i nakon
     // KORAKA 12 prisilno prepiše diarized.srt + words.json (+ članak, epub) na CDN-u.
     ...(reprocess ? ['--reprocess'] : []),
   ];
   if (flow === 'cloud') plan.env = { ...plan.env, ...CLOUD_FLOW_ENV };
+  if (flow === 'canary') plan.env = { ...plan.env, ...CANARY_FLOW_ENV };
   // Tier 2 (02.11.2026.): Soniox krediti su za praćene kanale (Tier 1 = video u
   // fetch.domovina.tv automatic/podcasts/*-lista.txt). Sve ostalo ide prvo na Speechmatics,
   // Soniox je tada fallback (transcribe_soniox.js čita ASR_PRIMARY). Bez popisa → Soniox.
@@ -161,4 +168,4 @@ function planFor(job, caps) {
   return plan;
 }
 
-module.exports = { planFor, isTier2, transcriptionFlow, FLOW_LABELS, LLM_BACKENDS, CLOUD_FLOW_ARGS, CLOUD_FLOW_ENV };
+module.exports = { planFor, isTier2, transcriptionFlow, FLOW_LABELS, LLM_BACKENDS, CLOUD_FLOW_ARGS, CLOUD_FLOW_ENV, CANARY_FLOW_ARGS, CANARY_FLOW_ENV };

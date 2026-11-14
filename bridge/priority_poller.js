@@ -141,6 +141,24 @@ function silentMarker(youtubeId) {
   }
 }
 
+// Prijepis bez kojeg nema članka (14.11.2026.): kanonski `.wav.canary.diarized.srt`. Od
+// 13.11. (Soniox/Speechmatics bez kredita) job je bez njega tiho visio u 'transcribing', jer
+// reconcile čeka CDN članak koji nikad neće doći. Vraća null kad SRT postoji, inače razlog
+// (iz `{base}.asr_failed.json` koji piše transcribe_soniox.js, ako ga ima).
+function missingTranscript(youtubeId) {
+  let files;
+  try { files = fs.readdirSync(UNLISTED_DIR).filter((f) => f.includes('_yt_' + youtubeId)); } catch { return null; }
+  const srt = files.find((f) => f.endsWith('.wav.canary.diarized.srt'));
+  try { if (srt && fs.statSync(path.join(UNLISTED_DIR, srt)).size > 0) return null; } catch { /* nečitljiv → nema */ }
+  const marker = files.find((f) => f.endsWith('.asr_failed.json'));
+  let reason = null;
+  try { reason = marker && JSON.parse(fs.readFileSync(path.join(UNLISTED_DIR, marker), 'utf-8')).reason; } catch { /* bez razloga */ }
+  const canary = files.some((f) => f.endsWith('.wav.canary.srt'));
+  return 'ASR: nema prijepisa nakon svih izvora' +
+    (reason ? ` — cloud: ${String(reason).slice(0, 200)}` : '') +
+    (canary ? '' : ' — Canary (Modal) nije dao prijepis');
+}
+
 // Stvarni ASR izvor teksta, s diska (04.11.2026.). Job nosi samo TRAŽENI tok ('soniox'), a
 // od 02.11. ASR se bira po tieru (ASR_PRIMARY), pa admin bez ovoga laže. Redoslijed je isti
 // kao kostur KORAKA 2.8 `auto`: soniox_pyannote → speechmatics_pyannote, pa goli ASR, pa Canary.
@@ -154,6 +172,7 @@ function asrProvider(youtubeId) {
   });
   if (nonEmpty(/\.soniox_pyannote(\.gemini)?\.diarized\.srt$/)) return 'soniox';
   if (nonEmpty(/\.speechmatics_pyannote(\.gemini)?\.diarized\.srt$/)) return 'speechmatics';
+  if (nonEmpty(/\.canary_(pyannote|solo)(\.gemini)?\.diarized\.srt$/)) return 'canary';
   if (nonEmpty(/\.soniox\.srt$/)) return 'soniox';
   if (nonEmpty(/\.speechmatics\.srt$/)) return 'speechmatics';
   if (nonEmpty(/\.wav\.canary\.srt$/)) return 'canary';
@@ -477,6 +496,13 @@ function retryAfterPause(proxy) {
         ...(readMeta(job.youtube_id) || {}),
       });
       console.log('  🔇 video bez zvuka → failed');
+      continue;
+    }
+    const noTranscript = missingTranscript(job.youtube_id);
+    if (noTranscript) {
+      await api('PATCH', `/api/jobs/${job.id}`, { state: 'failed', error: noTranscript, ...(readMeta(job.youtube_id) || {}) });
+      console.log(`  ❌ ${noTranscript} → failed`);
+      reportInventory(job.youtube_id);
       continue;
     }
     const meta = readMeta(job.youtube_id) || {};

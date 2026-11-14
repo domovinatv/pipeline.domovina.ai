@@ -17,7 +17,7 @@ const base = {
 };
 const has = (args, ...flags) => flags.every((f) => args.includes(f));
 
-test('običan prioritetni job s Canaryjem: bit-identično dosadašnjem pozivu', () => {
+test('običan prioritetni job s Canaryjem: Modal Canary + pyannote, 2.8 promovira odmah (14.11.2026.)', () => {
   const p = planFor(base, { replace: false, reprocessArticle: false });
   assert.equal(p.error, null);
   assert.equal(p.mode, 'pipeline');
@@ -25,8 +25,9 @@ test('običan prioritetni job s Canaryjem: bit-identično dosadašnjem pozivu', 
     '--unlisted-url', base.youtube_url, '--unlisted-title', 'Naslov',
     '--with-modal-transcribe', '--modal-only', '6e1MW97dv10',
     '--with-local-canary-diarize', '--with-r2-upload', '--gemini-backend', 'claude',
+    '--gemini-refine-promote', '--no-gemini-ear',
   ]);
-  assert.deepEqual(p.env, { CLAUDE_MODEL: 'opus' });
+  assert.deepEqual(p.env, { CLAUDE_MODEL: 'opus', GEMINI_REFINE_SKELETON: 'auto', CANARY_FALLBACK_AFTER_H: '0', CANARY_FALLBACK_FRESH_DAYS: '0' });
   assert.deepEqual(p.reuseArgs, ['--video-id', '6e1MW97dv10']);
 });
 
@@ -56,10 +57,12 @@ test('cloud tok s vertex backendom: env nosi samo kostur', () => {
   assert.deepEqual(p.env, { GEMINI_REFINE_SKELETON: 'auto' });
 });
 
-test("'canary': bez cloud zastavica i bez GEMINI_REFINE_SKELETON", () => {
+test("'canary': bez cloud ASR-a, ali 2.8 auto promovira Canary kostur", () => {
   const p = planFor(base, ALL);
-  for (const f of [...CLOUD, '--with-speechmatics']) assert.ok(!p.args.includes(f), f);
-  assert.ok(!('GEMINI_REFINE_SKELETON' in p.env));
+  for (const f of ['--with-soniox', '--with-pyannote-ai', '--with-speechmatics']) assert.ok(!p.args.includes(f), f);
+  assert.ok(p.args.includes('--gemini-refine-promote'));
+  assert.equal(p.env.GEMINI_REFINE_SKELETON, 'auto');
+  assert.equal(p.env.CANARY_FALLBACK_AFTER_H, '0');
 });
 
 test('transcriptionFlow mapiranje', () => {
@@ -73,7 +76,7 @@ test('transcriptionFlow mapiranje', () => {
 test('vertex backend se ne prosljeđuje i ne postavlja CLAUDE_MODEL', () => {
   const p = planFor({ ...base, llm_backend: 'vertex', llm_model: null }, ALL);
   assert.ok(!p.args.includes('--gemini-backend'));
-  assert.deepEqual(p.env, {});
+  assert.ok(!('CLAUDE_MODEL' in p.env));
 });
 
 test('nepoznat backend → vertex (whitelist)', () => {
@@ -188,6 +191,6 @@ test('Tier 2: istrošena agy Gemini kvota → Claude (12.11.2026.)', () => {
   assert.equal(backendOf(planFor(job('OTHER000001'), caps)), 'agy');
   const p = planFor(job('OTHER000001'), { ...caps, agyExhausted: true });
   assert.equal(backendOf(p), 'claude');
-  assert.deepEqual(p.env, { CLAUDE_MODEL: 'opus' });
+  assert.equal(p.env.CLAUDE_MODEL, 'opus');
   assert.equal(backendOf(planFor(job('TRACKED0001'), { ...caps, agyExhausted: true })), 'claude');
 });

@@ -43,7 +43,7 @@
  *   MAG_RUN_TIMEOUT_MS         (default 3_600_000 = 60 min po HR videu; run traje ~14 min prosjek)
  *   MAG_EN_TIMEOUT_MAX_MS      (default 4 h — gornja granica EN prijevoda; inače 30 min + 5 min/sekciji)
  */
-const { spawnSync } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -336,12 +336,48 @@ function runRunbook(youtubeId, lang, model, force) {
 
 // HR bez LLM-a: deterministički orkestrator u fetch repou (prep → MCP chat → assemble →
 // publish → CDN md5). Exit kod je informativan; izvor istine ostaje CDN provjera ispod.
+//
+// Timeout gasi CIJELU grupu procesa (18.11.2026.): spawnSync({timeout}) je ubijao samo
+// magisterium_mcp_episode.js, a njegov magisterium_mcp_client.js (MCP chat pozivi) nastavljao
+// je kao siroče — 13. i 17.11. je nakon „ETIMEDOUT” još objavljivao batch rezultate. Zato
+// `detached` (vlastita grupa) + kill(-pid). Vraća razlog neuspjeha ili null.
 function runDirect(youtubeId, force) {
   const args = ['tools/magisterium_mcp_episode.js', '--video-id', youtubeId];
   if (force) args.push('--force');
-  const r = spawnSync('node', args, { cwd: FETCH_REPO, stdio: 'inherit', timeout: RUN_TIMEOUT_MS });
-  if (r.error) console.error(`  ⚠️ magisterium_mcp_episode.js: ${r.error.message}`);
-  else if (r.status !== 0) console.error(`  ⚠️ magisterium_mcp_episode.js izašao s ${r.status}`);
+  return new Promise((resolve) => {
+    const child = spawn('node', args, { cwd: FETCH_REPO, stdio: 'inherit', detached: true });
+    let timedOut = false;
+    const killGroup = (sig) => { try { process.kill(-child.pid, sig); } catch { /* već mrtva */ } };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      console.error(`  ⚠️ magisterium_mcp_episode.js: timeout ${Math.round(RUN_TIMEOUT_MS / 60000)} min — gasim cijelu grupu procesa`);
+      killGroup('SIGTERM');
+      setTimeout(() => killGroup('SIGKILL'), 10000).unref();
+    }, RUN_TIMEOUT_MS);
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      console.error(`  ⚠️ magisterium_mcp_episode.js: ${e.message}`);
+      resolve(e.message);
+    });
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      if (timedOut) return resolve(`timeout ${Math.round(RUN_TIMEOUT_MS / 60000)} min`);
+      if (code === 0) return resolve(null);
+      const why = signal ? `signal ${signal}` : `exit ${code}`;
+      console.error(`  ⚠️ magisterium_mcp_episode.js izašao (${why})`);
+      resolve(why);
+    });
+  });
+}
+
+// Jedan automatski ponovni pokušaj (18.11.2026.): HR run bez artefakta vraća se u 'queued'
+// pa ga idući tick nastavi — MCP klijent preskače već gotove pozive, pa je ponavljanje jeftino.
+// Uzrok su bili zastoji cijelog stroja (14.11. 08:01–17:17, 17.11. ~08:21–09:05): run je
+// potrošio timeout čekajući, a posao je odmah išao u 'failed' i nitko ga više nije dirao.
+// Samo jednom (oznaka u `error`): drugi neuspjeh = 'failed', kao kod STUCK_MARK.
+const RETRY_MARK = 'auto-retry';
+function shouldRetry(job) {
+  return MAG_RUNNER === 'direct' && job.lang !== 'en' && !String(job.error || '').includes(RETRY_MARK);
 }
 
 (async () => {
@@ -394,6 +430,7 @@ function runDirect(youtubeId, force) {
     }
 
     // 2) EN: prijevod + objava bez Claudea. HR: MCP runbook headless — modelom sa zahtjeva.
+    let runFail = null;
     if (job.lang === 'en') {
       const err = await runEnglish(job);
       if (err) {
@@ -404,7 +441,7 @@ function runDirect(youtubeId, force) {
       }
     } else if (MAG_RUNNER === 'direct') {
       console.log(`  ▶ pokrećem Magisterium MCP izravno (magisterium_mcp_episode.js) — ~1 min po sekciji…`);
-      runDirect(job.youtube_id, job.force);
+      runFail = await runDirect(job.youtube_id, job.force);
     } else {
       const model = modelFor(job);
       console.log(`  ▶ pokrećem MCP runbook (${CLAUDE_BIN} --model ${model} -p …) — može potrajati ~14 min…`);
@@ -423,6 +460,13 @@ function runDirect(youtubeId, force) {
       console.log(`  ✅ ${artifactName(job.lang)} live na CDN-u → done`);
       // Ocjena (overall_score) je samo u HR artefaktu; EN je ne mijenja.
       if (job.lang !== 'en') katalogIngest(job.youtube_id);
+    } else if (shouldRetry(job)) {
+      const why = runFail || 'run bez artefakta na CDN-u';
+      await api('PATCH', `/api/magisterium/${job.id}`, {
+        state: 'queued',
+        error: `${RETRY_MARK}: 1. pokušaj nije uspio (${why}) — ponavljam u idućem ticku`,
+      });
+      console.log(`  🔁 nema artefakta (${why}) → queued, jedan ponovni pokušaj`);
     } else {
       await api('PATCH', `/api/magisterium/${job.id}`, {
         state: 'failed',
